@@ -3,6 +3,13 @@
 > 桌面端 PyQt5 + YOLOv8n 识别 + 地块地图 + 防治建议 + 教学科普 + 手机端联动的代码仓库。
 > **本仓库只包含程序代码及其运行依赖**；数据集、模型权重、日志、配置密钥、比赛材料和文档报告保留在本地工作区，不入库。
 
+## 下载
+
+- 代码：`git clone https://github.com/Rose-550/srt-rice.git`
+- 模型权重与手机端模型：[v0.1.0 Release](https://github.com/Rose-550/srt-rice/releases/tag/v0.1.0)
+  - `best.pt`（必下，桌面端启动必需）
+  - `model.onnx`、`ort-wasm-simd-threaded.wasm`（可选，手机端网页版）
+
 ## 克隆后先做什么
 
 1. 安装 **Python 3.10**。
@@ -22,8 +29,8 @@
    python -m pip install -r requirements.txt
    ```
 
-4. 把 **`best.pt`** 放到项目根目录。**没有它程序无法启动**，会在创建主窗口时报“未找到模型权重文件”。
-   - 向项目维护者获取；或从训练产物 `runs/detect/yolov8n_clean/weights/best.pt` 复制。
+4. 从 [v0.1.0 Release](https://github.com/Rose-550/srt-rice/releases/tag/v0.1.0) 下载 **`best.pt`**，放到项目根目录。**没有它程序无法启动**，会在创建主窗口时报“未找到模型权重文件”。
+   - 如果你有完整工作区，也可以从 `runs/detect/yolov8n_clean/weights/best.pt` 复制。
 5. 启动桌面端：
 
    ```powershell
@@ -72,14 +79,14 @@
 
 | 资源 | 获取方式 |
 |---|---|
-| `best.pt` | 向维护者获取，或从 `runs/detect/yolov8n_clean/weights/best.pt` 复制；**缺失无法启动** |
+| `best.pt` | 从 [v0.1.0 Release](https://github.com/Rose-550/srt-rice/releases/tag/v0.1.0) 下载；**缺失无法启动** |
 | `datasets/dataset_fieldlike/`、`datasets/dataset_splitfix/` | 训练集/评测集；缺失时教学题库只能用 `手机端可跑版/samples/` 的少量图片 |
 | `data/raw/` | 原始图池与标注（只读） |
 | `resources/fonts/` | 字体包（缺失回退系统字体） |
 | `resources/asr/` | `python scripts/get_asr_model.py` |
 | `resources/tts/` | `python scripts/get_tts_model.py` |
 | `resources/models/` | 3D 模型（缺失时 3D 页面没有模型） |
-| `手机端可跑版/model.onnx`、`*.wasm` | 手机端网页版模型（缺失时手机端不能推理） |
+| `手机端可跑版/model.onnx`、`*.wasm` | 从 [v0.1.0 Release](https://github.com/Rose-550/srt-rice/releases/tag/v0.1.0) 下载可选附件 |
 
 `vendor/` 里的 `pypdf`、`qrcode` 是随程序分发的小型依赖，不需要单独 pip 安装。
 
