@@ -77,8 +77,8 @@ foreach ($f in $staged) {
     $fi = Get-Item -LiteralPath $f -ErrorAction SilentlyContinue
     if ($fi) { $totalBytes += $fi.Length }
     if ($f -like "*config.json")              { $problems.Add("含密钥的配置: $f") }
-    if ($f -like "dataset_*/*")               { $problems.Add("数据集: $f") }
-    if ($f -like "JPEGImages/*")              { $problems.Add("原始图池: $f") }
+    if ($f -like "datasets/*")                { $problems.Add("数据集: $f") }
+    if ($f -like "data/*")                    { $problems.Add("数据目录: $f") }
     if ($f -like "runs/*")                    { $problems.Add("训练产物: $f") }
     if ($f -like "*.pt" -or $f -like "*.onnx"){ $problems.Add("模型权重: $f") }
     if ($fi -and $fi.Length -gt 15MB)         { $problems.Add(("超大文件 " + [math]::Round($fi.Length/1MB,1) + " MB: " + $f)) }

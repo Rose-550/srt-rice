@@ -34,7 +34,7 @@
 
 ## 数据规则
 
-- `JPEGImages/`、`Annotations/`、`YOLOLabels/` 是原始图池（9296 张），**只读**，不手改、不重排。
+- `data/raw/JPEGImages/`、`data/raw/Annotations/`、`data/raw/YOLOLabels/` 是原始图池（9296 张），**只读**，不手改、不重排。
 - `datasets/dataset_splitfix/`、`datasets/dataset_dedup3/`、`datasets/dataset_fieldlike/`、`datasets/dataset_fieldlike_ext/` 四套训练集：
   - 图片之间是**硬链接**，看起来各占 500MB 实际只有一份 —— **不要按目录大小决定删除**；
   - **不能删单张图片**，要改就整目录重建；
@@ -68,7 +68,7 @@
 ## 检索与性能提示
 
 项目根目录大且杂，搜索时排除这些目录，否则又慢又噪：
-`datasets/`、`JPEGImages/`、`Annotations/`、`YOLOLabels/`、`runs/`、`node_modules/`、`.mobile_probe/`、
+`datasets/`、`data/`、`runs/`、`node_modules/`、`.mobile_probe/`、
 `vendor/`、`build/`、`dist/`、`备份/`、`archive/`、`*.console.log`（单文件最大 10MB）。
 定位代码时优先用函数名/字符串 grep `rice_dp1_fluent.py`，它很大，不要整文件通读。
 

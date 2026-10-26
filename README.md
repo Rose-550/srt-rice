@@ -49,7 +49,7 @@
 
 | 目录 | 内容 | 规矩 |
 |---|---|---|
-| `JPEGImages/`、`Annotations/`、`YOLOLabels/` | 原始图池（9296 张）+ VOC/YOLO 标注 | **只读**，不手改 |
+| `data/raw/JPEGImages/`、`data/raw/Annotations/`、`data/raw/YOLOLabels/` | 原始图池（9296 张）+ VOC/YOLO 标注 | **只读**，不手改 |
 | `datasets/dataset_*/` | 四套训练集构建（splitfix / dedup3 / fieldlike / fieldlike_ext） | 硬链接，**不能手删单张**，整目录重建；yaml 里的 `path` 为绝对路径 |
 | `data/external/`、`data/_download/` | 外部数据集与下载缓存 | 只增不改；来源登记见 [docs/数据来源台账.md](docs/数据来源台账.md) |
 | `runs/detect/` | 训练产物（权重、曲线、结果 CSV） | 基准实验保留；临时实验用完可归档 |
@@ -102,9 +102,9 @@
 
 ## 八、整理状态（2026-10-26）
 
-- 已初始化 Git，基线 tag `baseline-20261026`；根目录从 175 个可见条目降到约 45 个。
+- 已初始化 Git，基线 tag `baseline-20261026`；根目录从 175 个可见条目降到约 43 个。
 - 已归档：历史版本、旧权重、训练日志、旧 `images/`+`labels/`+`dataset.yaml`、`build/`、`dist/`、`备份/`、`来时路/`、`reports/_scratch/`。
-- 已归位：报告 → `docs/reports/`，部署笔记 → `docs/deploy/`，截图 → `docs/images/design/`，演示页 → `docs/web/`，设计规范 → `docs/design/`，手机端文档 → `docs/mobile/`，工具脚本 → `scripts/`，四套训练集 → `datasets/`。
+- 已归位：报告 → `docs/reports/`，部署笔记 → `docs/deploy/`，截图 → `docs/images/design/`，演示页 → `docs/web/`，设计规范 → `docs/design/`，手机端文档 → `docs/mobile/`，工具脚本 → `scripts/`，四套训练集 → `datasets/`，原始图池 → `data/raw/`。
 - 待处理：大资源补齐口径、`大挑/`（149MB，未入库）、空目录清理。
 
 ## 九、克隆后需要补齐的资源

@@ -21,7 +21,7 @@ import cv2
 import numpy as np
 import rice_dp1_fluent as m
 
-IMG = ROOT / "JPEGImages"
+IMG = ROOT / "data" / "raw" / "JPEGImages"
 
 
 def render(src, specs, out_name, max_w=900):

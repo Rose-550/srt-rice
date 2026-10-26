@@ -28,7 +28,7 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 # 默认从项目里找几张现成样本图
 DEFAULT_IMAGE_DIRS = [
     os.path.join(ROOT, "..", "手机端可跑版", "samples"),
-    os.path.join(ROOT, "..", "JPEGImages"),
+    os.path.join(ROOT, "..", "data", "raw", "JPEGImages"),
 ]
 
 # 模拟的识别结论候选（与程序里的六类一致；不传结论就测不到端云一致性）
