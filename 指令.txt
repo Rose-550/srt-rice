@@ -1,1 +1,0 @@
-labelimg JPEGImages predefined_classes.txt

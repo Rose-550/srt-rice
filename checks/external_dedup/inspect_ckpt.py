@@ -5,7 +5,7 @@ names_en = [b'rice_leaf_roller', b'rice_water_weevil', b'rice_leafhopper', b'bac
 names_cn = ['稻纵卷叶螟'.encode('utf-8'), '稻水象甲'.encode('utf-8'), '稻叶蝉'.encode('utf-8'),
             '白叶枯病'.encode('utf-8'), '胡麻斑病'.encode('utf-8'), '稻瘟病'.encode('utf-8')]
 cands = []
-for p in ['best.pt', 'best_old.pt', 'best_names_fixed.pt', 'yolov8n.pt', 'yolo26n.pt']:
+for p in ['best.pt', 'models/best_old.pt', 'models/best_names_fixed.pt', 'yolov8n.pt', 'yolo26n.pt']:
     if os.path.isfile(p): cands.append(p)
 for p in sorted(glob.glob(os.path.join('runs', 'detect', '*', 'weights', 'best.pt'))):
     cands.append(p)

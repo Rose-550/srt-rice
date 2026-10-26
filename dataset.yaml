@@ -1,7 +1,0 @@
-# 你的根目录：桌面的rice文件夹，路径已写好
-path: C:/Users/罗浔/Desktop/rice  # 注意：把「你的用户名」换成自己电脑用户名（看地址栏）
-train: images/train
-val: images/val
-
-nc: 6  # 6类：3病+3虫
-names: ["稻纵卷叶螟", "稻水象甲", "稻叶蝉", "白叶枯病", "胡麻斑病", "稻瘟病"]
