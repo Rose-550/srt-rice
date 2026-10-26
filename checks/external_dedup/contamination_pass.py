@@ -31,7 +31,7 @@ hp = zp['hashes']; p_name = zp['name']; p_split = zp['split']
 blb = np.array([i for i, s in enumerate(e_cls) if s.split(',')[0] == '0'], dtype=int)
 HB = he[blb]
 
-built_dir = os.path.join(ROOT, 'dataset_fieldlike_ext', 'images', 'train')
+built_dir = os.path.join(ROOT, 'datasets', 'dataset_fieldlike_ext', 'images', 'train')
 built = [n for n in os.listdir(built_dir) if n.startswith('extblb_')]
 built_src = set(re.sub(r'\.(jpg|jpeg|png|JPG|JPEG|PNG)$', '', n[len('extblb_'):]) for n in built)
 stems = e_stem[blb].tolist()

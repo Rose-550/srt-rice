@@ -6,6 +6,7 @@
 
 # ════════ 1. 数据与数据集（体积大、可重建、硬链接）════════
 data/
+datasets/
 dataset_dedup3/
 dataset_fieldlike/
 dataset_fieldlike_ext/

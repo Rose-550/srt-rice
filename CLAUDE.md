@@ -24,7 +24,7 @@
 - **根目录相对路径写死**：主程序按 `BASE_DIR` 找资源。以下必须留在根目录，移动即功能失效：
   `rice_dp1_fluent.py`、`rice_geo.py`、`rice_3d.py`、`edge_tts_lite.py`、`3d_viewer.html`、
   `best.pt`、`resources/`、`vendor/`、`手机端可跑版/`、`手机端可跑版/samples/`、
-  `dataset_fieldlike/images/val/`、`dataset_splitfix/images/val/`。
+  `datasets/dataset_fieldlike/images/val/`、`datasets/dataset_splitfix/images/val/`。
 - **根目录的版本副本是历史，不要当入口**：`rice_dp1*.py` 的其他副本、`*.diff`、`main.py`、`1.py`、`rice_1.py`、
   `deep learning.py` 都不是当前程序。改动只改 `rice_dp1_fluent.py`，**不要再生成 `xxx - 副本 (2).py` 这类文件**。
 - **运行时目录由程序自己写，不要手工放文件**：`sessions/`、`inbox/`、`watch/`、`reports/`、`logs/`、
@@ -35,7 +35,7 @@
 ## 数据规则
 
 - `JPEGImages/`、`Annotations/`、`YOLOLabels/` 是原始图池（9296 张），**只读**，不手改、不重排。
-- `dataset_splitfix/`、`dataset_dedup3/`、`dataset_fieldlike/`、`dataset_fieldlike_ext/` 四套训练集：
+- `datasets/dataset_splitfix/`、`datasets/dataset_dedup3/`、`datasets/dataset_fieldlike/`、`datasets/dataset_fieldlike_ext/` 四套训练集：
   - 图片之间是**硬链接**，看起来各占 500MB 实际只有一份 —— **不要按目录大小决定删除**；
   - **不能删单张图片**，要改就整目录重建；
   - 各自 `dataset.yaml` 里 `path:` 是**绝对路径**，迁移/重建后必须同步修改。
@@ -45,7 +45,7 @@
 
 ```powershell
 # 训练模板（参数在 docs/实验记录.md 中逐字记录，改基准实验前先对照）
-& 'D:\anoconda3\envs\rice-gpu\Scripts\yolo.exe' detect train model='C:\Users\罗浔\Desktop\rice\yolov8n.pt' data='C:\Users\罗浔\Desktop\rice\dataset_fieldlike\dataset.yaml' epochs=50 imgsz=640 batch=16 device=0 seed=0 deterministic=True close_mosaic=10 workers=4 exist_ok=True project='C:\Users\罗浔\Desktop\rice\runs\detect' name=<实验名>
+& 'D:\anoconda3\envs\rice-gpu\Scripts\yolo.exe' detect train model='C:\Users\罗浔\Desktop\rice\yolov8n.pt' data='C:\Users\罗浔\Desktop\rice\datasets\dataset_fieldlike\dataset.yaml' epochs=50 imgsz=640 batch=16 device=0 seed=0 deterministic=True close_mosaic=10 workers=4 exist_ok=True project='C:\Users\罗浔\Desktop\rice\runs\detect' name=<实验名>
 
 # 验证
 & 'D:\anoconda3\envs\rice-gpu\Scripts\yolo.exe' detect val model='...\weights\best.pt' data='...\dataset.yaml' split=val imgsz=640 batch=16 device=0
@@ -68,7 +68,7 @@
 ## 检索与性能提示
 
 项目根目录大且杂，搜索时排除这些目录，否则又慢又噪：
-`dataset_*/`、`JPEGImages/`、`Annotations/`、`YOLOLabels/`、`runs/`、`node_modules/`、`.mobile_probe/`、
+`datasets/`、`JPEGImages/`、`Annotations/`、`YOLOLabels/`、`runs/`、`node_modules/`、`.mobile_probe/`、
 `vendor/`、`build/`、`dist/`、`备份/`、`archive/`、`*.console.log`（单文件最大 10MB）。
 定位代码时优先用函数名/字符串 grep `rice_dp1_fluent.py`，它很大，不要整文件通读。
 

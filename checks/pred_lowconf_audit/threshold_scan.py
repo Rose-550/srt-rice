@@ -1,6 +1,6 @@
 """Confidence-threshold scan for the v8n val predictions.
 
-Ground truth  : dataset_fieldlike/labels/val/*.txt   -> 5 cols  (cls cx cy w h)
+Ground truth  : datasets/dataset_fieldlike/labels/val/*.txt   -> 5 cols  (cls cx cy w h)
 Predictions   : runs/predict/pred_val_v8n/labels/*.txt -> 6 cols (cls cx cy w h conf)
 
 Method: match every prediction against ground truth ONCE, greedily by descending
@@ -19,8 +19,8 @@ from collections import defaultdict
 from PIL import Image
 
 ROOT = os.path.join(os.environ["USERPROFILE"], "Desktop", "rice")
-GT_LBL = os.path.join(ROOT, "dataset_fieldlike", "labels", "val")
-IMG = os.path.join(ROOT, "dataset_fieldlike", "images", "val")
+GT_LBL = os.path.join(ROOT, "datasets", "dataset_fieldlike", "labels", "val")
+IMG = os.path.join(ROOT, "datasets", "dataset_fieldlike", "images", "val")
 PRED_LBL = os.path.join(ROOT, "runs", "predict", "pred_val_v8n", "labels")
 OUT = os.path.join(ROOT, "checks", "pred_lowconf_audit")
 

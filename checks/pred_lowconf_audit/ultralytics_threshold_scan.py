@@ -19,7 +19,7 @@ from ultralytics import YOLO
 
 ROOT = os.path.join(os.environ["USERPROFILE"], "Desktop", "rice")
 MODEL = os.path.join(ROOT, "runs", "detect", "yolov8n_clean", "weights", "best.pt")
-DATA = os.path.join(ROOT, "dataset_fieldlike", "dataset.yaml")
+DATA = os.path.join(ROOT, "datasets", "dataset_fieldlike", "dataset.yaml")
 OUT = os.path.join(ROOT, "checks", "pred_lowconf_audit")
 
 NAMES = {0: "稻纵卷叶螟", 1: "稻水象甲", 2: "稻叶蝉",

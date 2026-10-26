@@ -121,7 +121,7 @@ with open(os.path.join(OUT, 'blb_clusters.csv'), 'w', newline='', encoding='utf-
 
 # ---------- PASS B: the images actually added ----------
 print('\n=== PASS B: images actually merged into training ===')
-built_dir = os.path.join(ROOT, 'dataset_fieldlike_ext', 'images', 'train')
+built_dir = os.path.join(ROOT, 'datasets', 'dataset_fieldlike_ext', 'images', 'train')
 built = [n for n in os.listdir(built_dir) if n.startswith('extblb_')]
 built_src = set(re.sub(r'\.(jpg|jpeg|png|JPG|JPEG|PNG)$', '', n[len('extblb_'):]) for n in built)
 pos = {s: i for i, s in enumerate(SB.tolist())}

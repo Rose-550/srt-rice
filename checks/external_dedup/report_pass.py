@@ -19,7 +19,7 @@ p_name = zp['name']; p_split = zp['split']
 _selp = os.path.join(OUT, 'added_sel.npy')
 blb0 = np.array([i for i, s in enumerate(e_cls) if s.split(',')[0] == '0'], dtype=int)
 stems0 = e_stem[blb0].tolist()
-_bd = os.path.join(ROOT, 'dataset_fieldlike_ext', 'images', 'train')
+_bd = os.path.join(ROOT, 'datasets', 'dataset_fieldlike_ext', 'images', 'train')
 _built = set(re.sub(r'\.(jpg|jpeg|png|JPG|JPEG|PNG)$', '', n[len('extblb_'):]) for n in os.listdir(_bd) if n.startswith('extblb_'))
 _pos = {s: i for i, s in enumerate(stems0)}
 sel = np.array(sorted(_pos[s] for s in _built if s in _pos), dtype=int)

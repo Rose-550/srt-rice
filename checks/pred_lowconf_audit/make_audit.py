@@ -15,7 +15,7 @@ from PIL import Image, ImageDraw
 
 ROOT = os.path.join(os.environ["USERPROFILE"], "Desktop", "rice")
 PRED_LBL = os.path.join(ROOT, "runs", "predict", "pred_val_v8n", "labels")
-VAL_IMG = os.path.join(ROOT, "dataset_fieldlike", "images", "val")
+VAL_IMG = os.path.join(ROOT, "datasets", "dataset_fieldlike", "images", "val")
 OUT = os.path.join(ROOT, "checks", "pred_lowconf_audit")
 os.makedirs(OUT, exist_ok=True)
 

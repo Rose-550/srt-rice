@@ -28,7 +28,7 @@ warnings.filterwarnings("ignore")
 import torch
 
 # 类别顺序取自当前训练集；旧根目录 dataset.yaml 已归档到 archive/legacy_dataset/
-DEFAULT_YAML = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dataset_fieldlike", "dataset.yaml")
+DEFAULT_YAML = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datasets", "dataset_fieldlike", "dataset.yaml")
 
 
 def load_class_order(yaml_path):

@@ -1887,7 +1887,7 @@ def _tool_batch_scan(args):
     if folder and not Path(folder).is_dir():
         # 模型容易臆造目录名：这里必须明确报错并给出可用目录，否则"成功返回空结果"会被误当成干完了
         usable = [str(p) for p in (WATCH_DIR, Path(res_path("手机端可跑版/samples")),
-                                   Path(res_path("dataset_fieldlike/images/val")))
+                                   Path(res_path("datasets/dataset_fieldlike/images/val")))
                   if p.is_dir()]
         log_event("task_bad_arg", tool="batch_scan", folder=str(folder))
         return json.dumps({"错误": "目录不存在：%s" % folder,
@@ -8369,8 +8369,8 @@ TRAIN_LABEL_MAP = {          # 文件名前缀 → 类别（与数据集命名�
     "brown_spot": "胡麻斑病",
     "rice_blast": "稻瘟病",
 }
-TRAIN_POOL_DIRS = ("dataset_fieldlike/images/val", "手机端可跑版/samples",
-                   "dataset_splitfix/images/val")
+TRAIN_POOL_DIRS = ("datasets/dataset_fieldlike/images/val", "手机端可跑版/samples",
+                   "datasets/dataset_splitfix/images/val")
 
 
 def guess_label_from_name(filename):

@@ -19,7 +19,7 @@ print('ckpt model.names =', dict(model.names))
 ok = (len(model.names) == 6) and all(model.names[i] == CLASS_NAMES[i] for i in range(6))
 print('names order identical to app CLASS_NAMES:', ok)
 
-VAL = os.path.join(ROOT, 'dataset_fieldlike', 'images', 'val')
+VAL = os.path.join(ROOT, 'datasets', 'dataset_fieldlike', 'images', 'val')
 prefixes = ['rice_leaf_roller', 'rice_water_weevil', 'rice_leafhopper',
             'bacterial_blight', 'brown_spot', 'rice_blast']
 picks = []

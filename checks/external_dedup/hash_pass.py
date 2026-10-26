@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 ROOT = os.path.abspath('.')
 EXT_IMG = os.path.join(ROOT, 'data', 'external', 'rice-leaf-diseases', 'rice', 'images')
 EXT_LBL = os.path.join(ROOT, 'data', 'external', 'rice-leaf-diseases', 'rice', 'labels')
-PRJ_IMG = os.path.join(ROOT, 'dataset_fieldlike', 'images')
+PRJ_IMG = os.path.join(ROOT, 'datasets', 'dataset_fieldlike', 'images')
 OUT = os.path.join(ROOT, 'checks', 'external_dedup')
 os.makedirs(OUT, exist_ok=True)
 
