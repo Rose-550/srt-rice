@@ -70,7 +70,7 @@
 | `docs/reference/` | 教程/参考资料（`yolo-for-beginners.html`） |
 | `docs/reports/` | Word/PDF 正式报告（中期报告、详细报告等，按版本归档） |
 | `docs/deploy/` | Nginx/HTTPS/中转/小程序部署笔记（①~⑨ 等） |
-| `docs/images/` | 文档配图、界面截图（`design/` 设计对比、`media/` 视频） |
+| `docs/images/` | 旧截图/对比图（`design/`）、视频（`media/`）、公式图（`formulas/`） |
 | `docs/web/` | 可分享的演示/评估页面（model-eval、模型评估、rice-detection-progress） |
 | `AI+教育大赛/` | 参赛材料子项目 |
 | `科普/` | 科普内容子项目 |
