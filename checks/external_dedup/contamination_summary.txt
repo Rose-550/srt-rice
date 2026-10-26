@@ -1,0 +1,19 @@
+=== contamination of project val caused by the 1496 added images ===
+val BLB images total: 935
+  dist<=2   : added images involved = 1    | distinct VAL images hit = 1   (0% of val BLB)
+  dist<=4   : added images involved = 5    | distinct VAL images hit = 6   (1% of val BLB)
+  dist<=8   : added images involved = 15   | distinct VAL images hit = 17  (2% of val BLB)
+  dist<=16  : added images involved = 28   | distinct VAL images hit = 26  (3% of val BLB)
+
+=== same-source-name grouping, per external class ===
+class                     images   sources  families inflation
+BacterialLeafBlight         2000       635       571   3.15x
+BrownSpot                   2000       568       568   3.52x
+Healthy                      433       250       250   1.73x
+Hispa                        431       244       244   1.77x
+LeafBlast                    449       249       249   1.80x
+LeafScald                    456       248       248   1.84x
+LeafSmut                    2000       583       523   3.43x
+NarrowBrownLeafSpot          443       247       247   1.79x
+NeckBlast                    453       250       250   1.81x
+ALL                         8665      3183      3059   2.72x

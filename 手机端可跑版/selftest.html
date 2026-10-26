@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>自检 · 稻视界</title>
+<style>body{font-family:ui-monospace,Consolas,monospace;background:#0f1512;color:#d7e6dd;padding:16px;font-size:13px;line-height:1.7}
+h1{font-size:16px;color:#5fd39a} .ok{color:#5fd39a} .bad{color:#ff8b7a} pre{white-space:pre-wrap}</style></head>
+<body><h1>手机端推理自检</h1><pre id="log">启动中…</pre>
+<script type="module">
+import * as ort from "./ort.wasm.min.mjs";
+import { letterbox, postprocess, CLASS_NAMES } from "./detect-core.mjs";
+const log = (m) => { document.getElementById("log").textContent += "\n" + m; };
+document.getElementById("log").textContent = "";
+ort.env.wasm.proxy = false;
+try {
+  log("crossOriginIsolated = " + self.crossOriginIsolated + "  线程数 = " + (navigator.hardwareConcurrency || 1));
+  log("加载模型…");
+  const t0 = performance.now();
+  const session = await ort.InferenceSession.create("./model.onnx", { executionProviders: ["wasm"] });
+  log("模型就绪，耗时 " + ((performance.now() - t0) / 1000).toFixed(1) + " s  输入=" + session.inputNames + " 输出=" + session.outputNames);
+  const samples = ["bacterial_blight_0", "rice_blast_0", "rice_water_weevil_0"];
+  for (const s of samples) {
+    const blob = await (await fetch("./samples/" + s + ".jpg")).blob();
+    const bmp = await createImageBitmap(blob);
+    const cv = document.createElement("canvas");
+    cv.width = bmp.width; cv.height = bmp.height;
+    const ctx = cv.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(bmp, 0, 0);
+    const px = ctx.getImageData(0, 0, bmp.width, bmp.height).data;
+    const rgb = new Uint8Array(bmp.width * bmp.height * 3);
+    for (let i = 0, j = 0; i < bmp.width * bmp.height; i++, j += 4) {
+      rgb[i * 3] = px[j]; rgb[i * 3 + 1] = px[j + 1]; rgb[i * 3 + 2] = px[j + 2];
+    }
+    const lb = letterbox(rgb, bmp.width, bmp.height, 640);
+    const input = new ort.Tensor("float32", lb.data, [1, 3, 640, 640]);
+    const t1 = performance.now();
+    const out = await session.run({ [session.inputNames[0]]: input });
+    const ms = performance.now() - t1;
+    const o = out[session.outputNames[0]];
+    const dets = postprocess(o.data, o.dims, lb, bmp.width, bmp.height, { conf: 0.4 });
+    const txt = dets.map((d) => d.label + " " + (d.score * 100).toFixed(0) + "% [" + d.box.map((v) => Math.round(v)).join(",") + "]").join(" ; ");
+    log((dets.length ? "OK  " : "MISS ") + s + "  " + bmp.width + "x" + bmp.height + "  推理 " + ms.toFixed(0) + " ms  ->  " + (txt || "无检出"));
+  }
+  log("自检完成");
+  document.title = "自检完成";
+} catch (e) {
+  log("失败: " + (e && e.message ? e.message : e));
+  document.title = "自检失败";
+}
+</script></body></html>

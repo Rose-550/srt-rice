@@ -1,0 +1,32 @@
+[
+ {
+  "d": 3,
+  "ext": "r6k_train_blight_orig_042_jpg.rf.dcd4134aeac02b3d7d9524c6999b89af.jpg",
+  "prj": "bacterial_blight_109.jpg",
+  "split": "val"
+ },
+ {
+  "d": 3,
+  "ext": "r6k_train_blight_orig_074_JPG_jpg.rf.373f915cb33ed8ffee1ddb05c3c60810.jpg",
+  "prj": "bacterial_blight_142.jpg",
+  "split": "val"
+ },
+ {
+  "d": 3,
+  "ext": "r6k_train_blight_rotated_062_JPG_jpg.rf.602ef4fd3806f789e87e92d8d2a65ef1.jpg",
+  "prj": "bacterial_blight_33.jpg",
+  "split": "val"
+ },
+ {
+  "d": 0,
+  "ext": "r6k_train_blight_orig_048_jpg.rf.c449e2f10a228521c09a93b8efc9b392.jpg",
+  "prj": "bacterial_blight_115.jpg",
+  "split": "train"
+ },
+ {
+  "d": 0,
+  "ext": "r6k_train_blight_orig_074_JPG_jpg.rf.373f915cb33ed8ffee1ddb05c3c60810.jpg",
+  "prj": "bacterial_blight_45.jpg",
+  "split": "train"
+ }
+]

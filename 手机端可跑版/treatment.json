@@ -1,0 +1,204 @@
+{
+ "稻纵卷叶螟": {
+  "symptom": "幼虫吐丝将稻叶纵卷成苞，在苞内取食叶肉，形成白叶。严重时田间一片枯白，远观如「火烧」状。",
+  "pest_img": "resources/treatment/稻纵卷叶螟/pest.jpg",
+  "agri": [
+   "合理施肥，避免偏施氮肥造成叶片过嫩",
+   "适时晒田，降低田间湿度",
+   "冬季清除田边杂草，减少越冬虫源"
+  ],
+  "bio": [
+   "释放赤眼蜂（Trichogramma）寄生卵块",
+   "使用Bt制剂（苏云金芽孢杆菌）喷洒"
+  ],
+  "threshold": "分蘖期百丛有虫苞30-50个，穗期百丛有虫苞20-30个",
+  "drugs": [
+   {
+    "name": "氯虫苯甲酰胺（康宽）",
+    "spec": "20% SC",
+    "dose": "10-15ml/亩",
+    "img": "resources/treatment/稻纵卷叶螟/drug_1.jpg"
+   },
+   {
+    "name": "甲维盐（甲氨基阿维菌素苯甲酸盐）",
+    "spec": "5% WG",
+    "dose": "10-15g/亩",
+    "img": "resources/treatment/稻纵卷叶螟/drug_2.jpg"
+   },
+   {
+    "name": "阿维菌素",
+    "spec": "1.8% EC",
+    "dose": "50-60ml/亩",
+    "img": "resources/treatment/稻纵卷叶螟/drug_3.jpg"
+   }
+  ]
+ },
+ "稻水象甲": {
+  "symptom": "成虫取食稻叶形成白色纵条斑，幼虫蛀食稻根，导致植株黄弱、分蘖减少，严重时整株枯死。",
+  "pest_img": "resources/treatment/稻水象甲/pest.jpg",
+  "agri": [
+   "严格检疫，防止随秧苗、稻草传播",
+   "冬季翻耕灭茬，减少越冬虫源",
+   "推迟移栽期，避开成虫迁飞高峰",
+   "加强水层管理，适时晒田"
+  ],
+  "bio": [
+   "稻田养鸭，利用天敌如步行虫、蜘蛛"
+  ],
+  "threshold": "秧田每平方米有成虫5头以上，本田百丛有成虫30头以上",
+  "drugs": [
+   {
+    "name": "氟虫腈（锐劲特）",
+    "spec": "5% SC",
+    "dose": "30-40ml/亩",
+    "img": "resources/treatment/稻水象甲/drug_1.jpg"
+   },
+   {
+    "name": "氯虫苯甲酰胺（康宽）",
+    "spec": "20% SC",
+    "dose": "10ml/亩",
+    "img": "resources/treatment/稻水象甲/drug_2.jpg"
+   },
+   {
+    "name": "高效氯氟氰菊酯",
+    "spec": "2.5% EC",
+    "dose": "30-40ml/亩",
+    "img": "resources/treatment/稻水象甲/drug_3.jpg"
+   }
+  ]
+ },
+ "稻叶蝉": {
+  "symptom": "成、若虫刺吸稻株汁液，叶片出现白色斑点，严重时整叶枯黄。可传播水稻矮缩病、黄矮病等病毒病。",
+  "pest_img": "resources/treatment/稻叶蝉/pest.jpg",
+  "agri": [
+   "选用抗性品种，清除田边杂草",
+   "合理布局，避免混栽「桥梁田」",
+   "灯光诱杀（黑光灯/频振式杀虫灯），每30-50亩一盏"
+  ],
+  "bio": [
+   "保护蜘蛛、瓢虫等自然天敌"
+  ],
+  "threshold": "秧田每平方米有虫50头以上，本田百丛有虫300-500头",
+  "drugs": [
+   {
+    "name": "吡虫啉",
+    "spec": "10% WP",
+    "dose": "20-30g/亩",
+    "img": "resources/treatment/稻叶蝉/drug_1.jpg"
+   },
+   {
+    "name": "噻虫嗪（阿克泰）",
+    "spec": "25% WG",
+    "dose": "6-8g/亩",
+    "img": "resources/treatment/稻叶蝉/drug_2.jpg"
+   },
+   {
+    "name": "烯啶虫胺",
+    "spec": "10% AS",
+    "dose": "30-50ml/亩",
+    "img": "resources/treatment/稻叶蝉/drug_3.jpg"
+   }
+  ]
+ },
+ "白叶枯病": {
+  "symptom": "叶片边缘出现水渍状黄色条纹，后沿叶缘扩展为灰白色枯死。湿度大时有黄白色菌脓，干燥后形成鱼籽状颗粒。",
+  "pest_img": "resources/treatment/白叶枯病/pest.jpg",
+  "agri": [
+   "选用抗病品种，种子用强氯精500倍液浸种12小时消毒",
+   "合理施肥，增施硅钾肥，避免偏施氮肥",
+   "浅水灌溉，避免深水淹灌",
+   "台风暴雨后立即排水，降低田间湿度"
+  ],
+  "bio": [],
+  "threshold": "台风暴雨前需提前预防，发病初期立即施药",
+  "drugs": [
+   {
+    "name": "噻菌铜（龙克菌）",
+    "spec": "20% SC",
+    "dose": "100-125ml/亩",
+    "img": "resources/treatment/白叶枯病/drug_1.jpg"
+   },
+   {
+    "name": "中生菌素",
+    "spec": "3% WP",
+    "dose": "40-60g/亩",
+    "img": "resources/treatment/白叶枯病/drug_2.jpg"
+   },
+   {
+    "name": "春雷霉素",
+    "spec": "2% AS",
+    "dose": "80-100ml/亩",
+    "img": "resources/treatment/白叶枯病/drug_3.jpg"
+   }
+  ]
+ },
+ "胡麻斑病": {
+  "symptom": "叶片出现椭圆形褐色小斑点，形状如芝麻粒（胡麻粒），周围有黄色晕圈。缺钾田、砂质田、酸性田发生较重。",
+  "pest_img": "resources/treatment/胡麻斑病/pest.jpg",
+  "agri": [
+   "核心措施：补施钾肥——该病本质上是缺素症的表现",
+   "增施腐熟有机肥，改良酸性土壤（施石灰）",
+   "合理灌溉，避免干旱胁迫"
+  ],
+  "bio": [],
+  "threshold": "分蘖期病叶率10%以上，抽穗期剑叶病叶率5%以上",
+  "drugs": [
+   {
+    "name": "苯醚甲环唑",
+    "spec": "10% WG",
+    "dose": "40-60g/亩",
+    "img": "resources/treatment/胡麻斑病/drug_1.jpg"
+   },
+   {
+    "name": "戊唑醇",
+    "spec": "430g/L SC",
+    "dose": "15-20ml/亩",
+    "img": "resources/treatment/胡麻斑病/drug_2.jpg"
+   },
+   {
+    "name": "嘧菌酯",
+    "spec": "250g/L SC",
+    "dose": "20-30ml/亩",
+    "img": "resources/treatment/胡麻斑病/drug_3.jpg"
+   }
+  ]
+ },
+ "稻瘟病": {
+  "symptom": "分为苗瘟、叶瘟、节瘟、穗颈瘟。叶瘟呈梭形暗绿色病斑，穗颈瘟造成白穗、绝收。穗颈瘟危害最大，破口期和齐穗期各防一次至关重要。",
+  "pest_img": "resources/treatment/稻瘟病/pest.jpg",
+  "agri": [
+   "选用抗病品种（最经济有效的措施）",
+   "合理施肥：氮磷钾配合，切忌偏施氮肥",
+   "适时晒田，湿润灌溉",
+   "处理带病稻草，减少菌源"
+  ],
+  "bio": [],
+  "threshold": "破口初期（抽穗5%时）和齐穗期各施药一次，施药后4小时内遇雨需补喷",
+  "drugs": [
+   {
+    "name": "三环唑",
+    "spec": "75% WP",
+    "dose": "20-30g/亩",
+    "img": "resources/treatment/稻瘟病/drug_1.jpg"
+   },
+   {
+    "name": "吡唑醚菌酯",
+    "spec": "25% EC",
+    "dose": "30-40ml/亩",
+    "img": "resources/treatment/稻瘟病/drug_2.jpg"
+   },
+   {
+    "name": "稻瘟灵（富士一号）",
+    "spec": "40% EC",
+    "dose": "80-100ml/亩",
+    "img": "resources/treatment/稻瘟病/drug_3.jpg"
+   },
+   {
+    "name": "肟菌·戊唑醇",
+    "spec": "75% WG",
+    "dose": "15-20g/亩",
+    "img": "resources/treatment/稻瘟病/drug_4.jpg"
+   }
+  ]
+ }
+}

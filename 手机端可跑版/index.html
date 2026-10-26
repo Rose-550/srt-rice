@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b6b3a">
+<title>稻视界 · 手机端识别</title>
+<style>
+  :root { --green:#0b6b3a; --green2:#128a4b; --line:#dfe6e1; --muted:#6b7a72; --bg:#f4f7f5; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+         background:var(--bg); color:#12211a; padding:14px 14px 40px; }
+  h1 { font-size:19px; margin:4px 0 2px; color:var(--green); }
+  .sub { font-size:12px; color:var(--muted); margin-bottom:14px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:14px; padding:14px; margin-bottom:12px; }
+  .btnrow { display:flex; gap:10px; }
+  .btn { flex:1; border:0; border-radius:11px; padding:13px 10px; font-size:15px; font-weight:600;
+         background:var(--green); color:#fff; }
+  .btn.alt { background:#fff; color:var(--green); border:1.5px solid var(--green); }
+  .btn:disabled { opacity:.45; }
+  input[type=file] { display:none; }
+  #stage { position:relative; width:100%; display:none; margin-bottom:12px; }
+  #stage canvas { width:100%; height:auto; display:block; border-radius:12px; background:#000; }
+  .row { display:flex; justify-content:space-between; align-items:center; font-size:13px; padding:7px 0;
+         border-bottom:1px solid var(--line); }
+  .row:last-child { border-bottom:0; }
+  .tag { font-weight:700; color:var(--green); }
+  .conf { color:var(--muted); font-variant-numeric:tabular-nums; }
+  .status { font-size:13px; color:var(--muted); line-height:1.6; }
+  .status.err { color:#b3261e; }
+  .kv { font-size:13px; line-height:1.7; }
+  .kv b { color:var(--green); }
+  .drug { border:1px solid var(--line); border-radius:10px; padding:9px 11px; margin-top:8px; font-size:13px; }
+  .drug .nm { font-weight:700; }
+  .pill { display:inline-block; font-size:11px; background:#e7f2ec; color:var(--green2);
+          border-radius:999px; padding:2px 8px; margin-right:6px; }
+  ul { margin:6px 0 0; padding-left:18px; font-size:13px; line-height:1.75; }
+  .slider { display:flex; align-items:center; gap:10px; font-size:13px; color:var(--muted); }
+  input[type=range] { flex:1; }
+  .note { font-size:11.5px; color:var(--muted); line-height:1.6; margin-top:8px; }
+</style>
+</head>
+<body>
+  <h1>稻视界 · 手机端识别</h1>
+  <div class="sub">模型在你的手机本地运行，照片不出手机（YOLOv8n · 6 类）</div>
+
+  <div class="card">
+    <div class="btnrow">
+      <button class="btn" id="pick">选择照片</button>
+      <button class="btn alt" id="shoot">拍照识别</button>
+    </div>
+    <input type="file" id="file" accept="image/*">
+    <input type="file" id="camera" accept="image/*" capture="environment">
+    <div class="slider" style="margin-top:12px">
+      <span>置信度阈值</span>
+      <input type="range" id="conf" min="10" max="90" value="40" step="5">
+      <span id="confv" class="conf">0.40</span>
+    </div>
+    <div class="note">阈值越低越不容易漏检，但误检会变多。桌面端默认 0.40（漏检比误检更危险）。</div>
+  </div>
+
+  <div id="stage"><canvas id="cv"></canvas></div>
+
+  <div class="card" id="statusCard">
+    <div class="status" id="status">正在加载模型…首次打开需要下载推理引擎（约 12&nbsp;MB），请保持网络畅通。</div>
+  </div>
+
+  <div class="card" id="resultCard" style="display:none">
+    <div id="result"></div>
+  </div>
+
+  <div class="card" id="planCard" style="display:none">
+    <div id="plan"></div>
+  </div>
+
+<script type="module" src="./app.mjs?v=14"></script>
+</body>
+</html>

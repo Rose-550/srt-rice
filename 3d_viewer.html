@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>稻视界 3D 科普</title>
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#eef3ea}
+#tip{position:fixed;left:12px;bottom:10px;font:12px/1.6 sans-serif;color:#5a6b60}
+#cr{position:fixed;right:12px;bottom:10px;font:11px/1.5 sans-serif;color:#8b978f;text-align:right}</style>
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
+</head><body>
+<div id="tip">拖动旋转 · 滚轮缩放 · 双击暂停自动旋转</div>
+<div id="cr">模型：Moth by JanoschR · Weevil by osuecampus · Konik polny by Robert<br>来源 Sketchfab，CC-BY-4.0</div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xeef3ea);
+scene.fog = new THREE.Fog(0xeef3ea, 4.5, 11.0);
+const camera = new THREE.PerspectiveCamera(40, innerWidth/innerHeight, 0.05, 100);
+camera.position.set(2.35, 1.72, 3.15);
+const renderer = new THREE.WebGLRenderer({antialias:true, preserveDrawingBuffer:true});
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x93a67c, 1.15));
+const sun = new THREE.DirectionalLight(0xfff3e0, 2.1);
+sun.position.set(2.4,4.2,1.8); sun.castShadow = true;
+sun.shadow.mapSize.set(2048,2048);
+sun.shadow.camera.near=0.5; sun.shadow.camera.far=12;
+sun.shadow.camera.left=-2; sun.shadow.camera.right=2;
+sun.shadow.camera.top=2.6; sun.shadow.camera.bottom=-1;
+sun.shadow.bias=-0.0008; scene.add(sun);
+const fill = new THREE.DirectionalLight(0xd6e6ff, 0.55);
+fill.position.set(-3,1.6,-2.4); scene.add(fill);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0,0.78,0);
+controls.enableDamping = true; controls.dampingFactor = 0.07;
+controls.autoRotate = true; controls.autoRotateSpeed = 0.7;
+controls.minDistance=0.9; controls.maxDistance=8;
+controls.minPolarAngle=0.25; controls.maxPolarAngle=Math.PI*0.52;
+
+const ground = new THREE.Mesh(new THREE.CircleGeometry(7,72),
+  new THREE.MeshStandardMaterial({color:0xe2e9d8, roughness:1}));
+ground.rotation.x=-Math.PI/2; ground.receiveShadow=true; scene.add(ground);
+const mat=(c,r)=>new THREE.MeshStandardMaterial({color:c, roughness:r===undefined?0.85:r, metalness:0.02});
+
+// 叶片用带状几何体：按曲线切线求侧向，左右各出一个顶点，形成扁平面片
+function ribbon(points, w0, w1){
+  const pos=[], idx=[], up=new THREE.Vector3(0,1,0);
+  for(let i=0;i<points.length;i++){
+    const t=i/(points.length-1), p=points[i];
+    const tan=(i<points.length-1 ? points[i+1].clone().sub(p) : p.clone().sub(points[i-1])).normalize();
+    let side=new THREE.Vector3().crossVectors(tan, up);
+    if(side.lengthSq()<1e-8) side.set(1,0,0);
+    side.normalize();
+    const w=(w0+(w1-w0)*t)*0.5;
+    pos.push(p.x+side.x*w, p.y+side.y*w, p.z+side.z*w);
+    pos.push(p.x-side.x*w, p.y-side.y*w, p.z-side.z*w);
+  }
+  for(let i=0;i<points.length-1;i++){
+    const a=i*2,b=i*2+1,c=(i+1)*2,d=(i+1)*2+1;
+    idx.push(a,c,b, b,c,d);
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos,3));
+  g.setIndex(idx); g.computeVertexNormals();
+  return g;
+}
+const C_LEAF=0x5fa03e, C_LEAF_HL=0xc2453a;
+const C_OLD=0x9fae52,  C_OLD_HL=0xc98a3c;
+const C_STEM=0xa9c46a, C_STEM_HL=0xb0563f;
+const C_PAN=0xd9c47f,  C_PAN_HL=0xb98a3f;
+const stemMat=new THREE.MeshStandardMaterial({color:C_STEM, roughness:0.9});
+const panicleMat=new THREE.MeshStandardMaterial({color:C_PAN, roughness:0.85});
+const leafNew=new THREE.MeshStandardMaterial({color:C_LEAF, roughness:0.9, side:THREE.DoubleSide});
+const leafOld=new THREE.MeshStandardMaterial({color:0x9fae52, roughness:0.9, side:THREE.DoubleSide});
+
+const plant=new THREE.Group();
+const tillers=6;
+for(let i=0;i<tillers;i++){
+  const ang=i*(Math.PI*2/tillers)+0.35, h=0.86+(i%3)*0.16;
+  const sp=[];
+  for(let k=0;k<=8;k++){ const t=k/8;
+    sp.push(new THREE.Vector3(Math.cos(ang)*0.20*t*t, h*t, Math.sin(ang)*0.20*t*t)); }
+  const stem=new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(sp),16,0.014,6,false), stemMat);
+  stem.castShadow=true; plant.add(stem);
+  for(let k=0;k<4;k++){
+    const y=0.16+k*0.19, la=ang+(k-1.5)*0.85, len=0.46+(k%2)*0.10, pts=[];
+    for(let j=0;j<=10;j++){
+      const t=j/10, r=len*t;
+      const yy=y+Math.sin(t*Math.PI*0.95)*0.20-t*t*0.40;
+      const ox=Math.cos(ang)*0.20*(y/h)*(y/h), oz=Math.sin(ang)*0.20*(y/h)*(y/h);
+      pts.push(new THREE.Vector3(ox+Math.cos(la)*r, yy, oz+Math.sin(la)*r));
+    }
+    const lf=new THREE.Mesh(ribbon(pts,0.058,0.006), (k===3)?leafOld:leafNew);
+    lf.castShadow=true; lf.receiveShadow=true; plant.add(lf);
+  }
+  if(i%2===0){
+    const pa=ang+0.6, pp=[];
+    for(let k=0;k<=10;k++){ const t=k/10;
+      pp.push(new THREE.Vector3(Math.cos(pa)*(0.05+t*t*0.32),
+        h+0.14+Math.sin(t*Math.PI)*0.10-t*t*0.26, Math.sin(pa)*(0.05+t*t*0.32))); }
+    const pth=new THREE.CatmullRomCurve3(pp);
+    const pan=new THREE.Mesh(new THREE.TubeGeometry(pth,20,0.009,5,false), panicleMat);
+    pan.castShadow=true; plant.add(pan);
+    const gm=mat(0xead99c,0.7);
+    for(let k=1;k<15;k++){
+      const p=pth.getPointAt(k/15);
+      for(const s of [-1,1]){
+        const gr=new THREE.Mesh(new THREE.SphereGeometry(0.014,6,5), gm);
+        gr.position.set(p.x+s*0.017,p.y,p.z+s*0.017);
+        gr.scale.set(1,1.8,1); gr.castShadow=true; plant.add(gr);
+      }
+    }
+  }
+}
+scene.add(plant);
+
+const loader=new GLTFLoader();
+const state={ok:0,fail:0}; window.__loaded=state;
+function placeModel(path,opts){
+  loader.load(path,function(g){
+    const root=g.scene;
+    let box=new THREE.Box3().setFromObject(root);
+    const size=new THREE.Vector3(); box.getSize(size);
+    const maxDim=Math.max(size.x,size.y,size.z)||1;
+    root.scale.setScalar((opts.size||0.4)/maxDim);
+    box=new THREE.Box3().setFromObject(root);
+    const H=box.max.y-box.min.y;
+    if(opts.cropBase){          // 标本模型自带展示底座：底部且明显偏宽的网格隐藏掉
+      const kill=[];
+      root.traverse(function(n){
+        if(!n.isMesh) return;
+        const b=new THREE.Box3().setFromObject(n);
+        const cy=(b.min.y+b.max.y)/2;
+        const bw=Math.max(b.max.x-b.min.x, b.max.z-b.min.z);
+        if((cy-box.min.y)/H < 0.24 && bw > (opts.size||0.4)*0.40) kill.push(n);
+      });
+      kill.forEach(function(n){ n.visible=false; });
+      box=new THREE.Box3().setFromObject(root);
+    }
+    root.traverse(function(n){ if(n.isMesh&&n.visible){ n.castShadow=true; n.receiveShadow=true; } });
+    const c=new THREE.Vector3(); box.getCenter(c);
+    root.position.sub(c);
+    root.position.y+=(box.max.y-box.min.y)/2;     // 底面贴地/贴叶面
+    root.position.add(new THREE.Vector3(opts.at[0],opts.at[1],opts.at[2]));
+    root.rotation.set(opts.rx||0, opts.ry||0, opts.rz||0);
+    scene.add(root); state.ok++;
+  },undefined,function(e){ state.fail++; console.error('load fail',path,e); });
+}
+// 蛾停在上部叶片 · 象甲在茎基部 · 蚱蜢在中部叶上
+placeModel('resources/models/moth/scene.gltf',      {size:0.28, at:[-0.30,0.80,-0.16], ry:0.55, rz:0.10});
+placeModel('resources/models/weevil/scene.gltf',    {size:0.17, at:[-0.20,0.03,0.16], ry:1.0});
+// 蚱蜢模型自带展示木桩（和虫体同一网格拆不开），放到地面并下沉把木桩埋掉
+placeModel('resources/models/konik_polny/scene.gltf',{size:0.34, at:[-0.62,-0.115,0.40], ry:2.35});
+
+addEventListener('resize',function(){
+  camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+(function loop(){ requestAnimationFrame(loop); controls.update(); renderer.render(scene,camera); })();
+// 供 Qt 调用：按病害高亮受害部位
+const DISEASE_PARTS = {
+  '稻纵卷叶螟': ['leaf','tip'],
+  '稻水象甲':   ['leaf','stem'],
+  '稻叶蝉':     ['stem'],
+  '白叶枯病':   ['leaf','tip'],
+  '胡麻斑病':   ['leaf'],
+  '稻瘟病':     ['leaf','panicle'],
+};
+window.setDisease = function(name){
+  const p = DISEASE_PARTS[name] || [];
+  leafNew.color.set(p.indexOf('leaf')>=0 ? C_LEAF_HL : C_LEAF);
+  leafOld.color.set(p.indexOf('tip')>=0  ? C_OLD_HL  : C_OLD);
+  stemMat.color.set(p.indexOf('stem')>=0 ? C_STEM_HL : C_STEM);
+  panicleMat.color.set(p.indexOf('panicle')>=0 ? C_PAN_HL : C_PAN);
+  return p.length;
+};
+window.setSpin = function(on){ controls.autoRotate = !!on; };
+window.__ready=true;
+</script></body></html>

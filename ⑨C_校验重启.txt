@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# 【第 9 段 C】校验 + 重启 + 验证
+set -e
+APP=/opt/rice-relay
+echo "==> 语法校验"
+python3 -m py_compile $APP/relay_server.py && echo "    语法 OK"
+echo "==> 重启服务"
+systemctl restart rice-relay
+sleep 2
+echo -n "接口: "; curl -s http://127.0.0.1:9000/api/ping; echo
+echo -n "新按钮是否上线: "; curl -s http://127.0.0.1:9000/ | grep -c "我此刻就在这块地里" || echo 0
+echo
+echo "（上一行输出 1 = 成功；0 = 还是旧页面）"

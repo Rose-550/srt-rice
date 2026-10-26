@@ -1,0 +1,210 @@
+{
+  "label": "wangxue",
+  "paragraphs": [
+    {
+      "style": "Normal",
+      "text": "稻视界项目个人分工报告"
+    },
+    {
+      "style": "Normal",
+      "text": "模型训练、Streamlit Web应用、高德地图可视化与系统集成"
+    },
+    {
+      "style": "Normal",
+      "text": "王雪  31124304  信息管理学院  工业工程"
+    },
+    {
+      "style": "Heading 1",
+      "text": "1. 研究目标与研究内容"
+    },
+    {
+      "style": "Normal",
+      "text": "1.1 研究目标"
+    },
+    {
+      "style": "Normal",
+      "text": "本人在项目中承担的核心任务：(1)完成YOLOv8s目标检测模型的完整训练流程；(2)开发基于Streamlit的Web端智能诊断系统；(3)基于高德地图构建病虫害空间分布可视化模块；(4)推动数据集从6类向13类扩展；(5)完成系统云端训练脚本、本地部署工具链和PyInstaller打包。"
+    },
+    {
+      "style": "Normal",
+      "text": "1.2 研究内容"
+    },
+    {
+      "style": "Normal",
+      "text": "(1)模型训练体系：train.py(114行)支持AutoDL/本地双环境，config.py(95行)中央配置管理，eval_compare.py(82行)多模型对比评估。(2)数据集扩展：merge_13cls.py(105行)6类到13类合并，pseudo_label.py(135行)伪标签生成。(3)Streamlit Web应用：app.py(321行)双标签页系统，main.py(144行)命令行入口。(4)模块化架构：detector.py(101行)检测封装，coordinator.py(39行)GPS三级分配，utils.py(78行)工具函数。(5)高德地图可视化：mapper.py(131行)Folium+高德瓦片，run_map.py(88行)独立调试。(6)系统部署：PyInstaller配置、批处理脚本、三环境兼容。总计13个核心文件，1,346行代码。"
+    },
+    {
+      "style": "Heading 1",
+      "text": "2. 模型训练体系"
+    },
+    {
+      "style": "Normal",
+      "text": "2.1 train.py(114行)：argparse全参数配置，Linux/Windows双环境自适应。YOLOv8s基线，100 epoch，640x640，lr0=0.01。配套三个Shell脚本覆盖AutoDL一键训练。"
+    },
+    {
+      "style": "Normal",
+      "text": "2.2 config.py(95行)：五大配置域——路径、检测(阈值0.25/三级严重度)、坐标(32.080N/118.770E/抖动300m)、地图(高德URL/子域轮换)、位置(南农)。"
+    },
+    {
+      "style": "Normal",
+      "text": "2.3 merge_13cls(105行)+pseudo_label(135行)：13类数据集合并(ID映射/去重)+伪标签自动生成。"
+    },
+    {
+      "style": "Heading 1",
+      "text": "3. Streamlit Web应用"
+    },
+    {
+      "style": "Normal",
+      "text": "3.1 app.py(321行)：双标签页widescreen布局，@st.cache_resource缓存YOLO模型，内建HTTP服务器(8765)托管地图HTML。图片识别标签页：批量上传+实时检测+OpenCV中文标注+DataFrame历史表格+柱状统计图+CSV导出。数字地图标签页：iframe嵌入Folium高德地图，数据流闭环(上传->检测->GPS->CSV->地图->iframe)。"
+    },
+    {
+      "style": "Normal",
+      "text": "3.2 main.py(144行)：命令行入口，三种模式(完整/仅CSV/仅地图)。"
+    },
+    {
+      "style": "Heading 1",
+      "text": "4. 模块化架构"
+    },
+    {
+      "style": "Normal",
+      "text": "detector.py(101行)：批量/单张检测+EXIF GPS+标注图+base64缩略图。coordinator.py(39行)：三级GPS优先级(EXIF>配置表>默认抖动)。utils.py(78行)：base64编码/严重度分类/GPS提取/时间戳。"
+    },
+    {
+      "style": "Heading 1",
+      "text": "5. 高德地图可视化"
+    },
+    {
+      "style": "Normal",
+      "text": "5.1 技术选型：Folium+Leaflet.js引擎，高德瓦片底图(GCJ-02,18级,四子域)，CircleMarker(颜色+半径双维度)，HTML+base64弹窗(离线自包含)，LocateControl+MeasureControl。"
+    },
+    {
+      "style": "Normal",
+      "text": "5.2 瓦片URL：https://webrd0{s}.is.autonavi.com/appmaptile?x={x}&y={y}&z={z}&lang=zh_cn&size=1&scale=1&style=7，subdomains必须为字符串格式1234(Leaflet.js规范)。"
+    },
+    {
+      "style": "Normal",
+      "text": "5.3 mapper.py七步流程：初始化(tiles=None)->高德瓦片层->蓝色图钉->LocateControl->MeasureControl->CircleMarker循环(颜色/半径/tooltip/Popup/base64缩略图)->CSS fixed左下角图例。"
+    },
+    {
+      "style": "Normal",
+      "text": "5.4 坐标分配：EXIF GPS(DMS->DD转换+南北半球负号)->配置表文件名匹配->默认基准加随机抖动(300m/5m)。"
+    },
+    {
+      "style": "Normal",
+      "text": "5.5 数据流闭环：上传->YOLO检测->GPS->CSV->Folium地图->HTTP服务(8765,daemon)->iframe。解决file协议下高德瓦片CORS限制。"
+    },
+    {
+      "style": "Normal",
+      "text": "5.6 坐标系：GCJ-02(火星)与WGS-84偏移100-700m，原型阶段暂不转换。Web墨卡托投影(EPSG:3857)瓦片切割。"
+    },
+    {
+      "style": "Heading 1",
+      "text": "6. 部署与工程化"
+    },
+    {
+      "style": "Normal",
+      "text": "PyInstaller打包(rice_app.spec,build.bat)，三种启动(Web:8504/命令行/一键bat)，三环境兼容(开发/冻结/云端)。"
+    },
+    {
+      "style": "Heading 1",
+      "text": "7. 核心公式"
+    },
+    {
+      "style": "Normal",
+      "text": "7.1 YOLOv8s Anchor-Free解码((cx,cy)网格坐标,(pw,ph)尺度因子)"
+    },
+    {
+      "style": "Normal",
+      "text": "损失函数(lambda_box=7.5,lambda_cls=0.5,lambda_DFL=1.5)"
+    },
+    {
+      "style": "Normal",
+      "text": "CIoU回归损失与DFL分布焦点损失"
+    },
+    {
+      "style": "Normal",
+      "text": "评价指标"
+    },
+    {
+      "style": "Normal",
+      "text": "7.2 GPS坐标转换公式(论文格式渲染)"
+    },
+    {
+      "style": "Normal",
+      "text": "EXIF GPS坐标从度分秒(DMS)格式到十进制度(DD)的转换(南半球/西半球需添加负号)："
+    },
+    {
+      "style": "Normal",
+      "text": "检测点最终GPS坐标通过基准坐标加随机抖动生成："
+    },
+    {
+      "style": "Normal",
+      "text": "其中随机偏移量根据场景取值：图片间抖动取0.003度(约300米)，同图内多点微调取0.00005度(约5米)。该公式在coordinator.py的assign_coordinates()函数中实现。"
+    },
+    {
+      "style": "Heading 1",
+      "text": "8. 代码总览"
+    },
+    {
+      "style": "Heading 1",
+      "text": "9. 实验效果"
+    },
+    {
+      "style": "Normal",
+      "text": "训练损失曲线"
+    },
+    {
+      "style": "Normal",
+      "text": "训练mAP曲线"
+    },
+    {
+      "style": "Normal",
+      "text": "高德地图病虫害分布"
+    },
+    {
+      "style": "Heading 1",
+      "text": "10. 个人总结"
+    },
+    {
+      "style": "Normal",
+      "text": "完成13个核心文件、1,346行Python代码的完整系统体系。模型训练(291行)：双环境自适应+中央配置+评估。数据集(240行)：13类合并+伪标签。Web应用(465行)：Streamlit双标签页+批量识别+CSV+统计。模块(218行)：检测封装/GPS三级分配/工具函数。地图(219行)：Folium+高德瓦片+三级标记+HTTP服务。部署：PyInstaller+批处理+三环境兼容。"
+    }
+  ],
+  "tables": [
+    {
+      "index": 0,
+      "rows": 7,
+      "cols": 2,
+      "data": [
+        [
+          "模块",
+          "行数"
+        ],
+        [
+          "训练(train/config/eval)",
+          "291"
+        ],
+        [
+          "数据集(merge/pseudo)",
+          "240"
+        ],
+        [
+          "Web(app/main)",
+          "465"
+        ],
+        [
+          "模块(detector/coord/utils)",
+          "218"
+        ],
+        [
+          "地图(mapper/run_map)",
+          "219"
+        ],
+        [
+          "合计(13文件)",
+          "1,346"
+        ]
+      ]
+    }
+  ]
+}

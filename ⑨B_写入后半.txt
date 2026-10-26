@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+# 【第 9 段 B】接着写 relay_server.py 后半部分
+set -e
+APP=/opt/rice-relay
+cat >> $APP/relay_server.py <<'__PART2__'
+
+    def _err(self, code, msg):
+        self._json({"ok": False, "error": msg}, code)
+
+    def _body(self):
+        n = int(self.headers.get("Content-Length") or 0)
+        if n <= 0:
+            return b""
+        return self.rfile.read(n)
+
+    def _json_body(self):
+        raw = self._body()
+        if not raw:
+            return {}
+        try:
+            return json.loads(raw.decode("utf-8"))
+        except Exception as e:
+            raise ValueError("请求体不是合法 JSON: %s" % e)
+
+    def _authed(self):
+        """电脑端拉取接口的口令校验；未设置 RELAY_TOKEN 时放行。"""
+        if not RELAY_TOKEN:
+            return True
+        tok = self.headers.get("X-Auth-Token") or parse_qs(urlparse(self.path).query).get("token", [""])[0]
+        return tok == RELAY_TOKEN
+
+    def log_message(self, fmt, *args):
+        sys.stderr.write("[%s] %s - %s\n" % (time.strftime("%H:%M:%S"), self.address_string(), fmt % args))
+
+    # ---------- 路由 ----------
+    def do_GET(self):
+        u = urlparse(self.path)
+        path, qs = u.path, parse_qs(u.query)
+
+        if path in ("/", "/up", "/index.html"):
+            body = RELAY_UPLOAD_PAGE.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if path in ("/api/ping", "/ping"):
+            return self._json({"ok": True, "service": "rice-relay",
+                               "time": time.time(), "records": len(load_index())})
+
+        if path == "/api/records":
+            if not self._authed():
+                return self._err(401, "口令不正确（请检查电脑端 RELAY_TOKEN）")
+            try:
+                since = float(qs.get("since", ["0"])[0])
+            except ValueError:
+                return self._err(400, "since 必须是数字时间戳")
+            try:
+                limit = max(1, min(500, int(qs.get("limit", ["200"])[0])))
+            except ValueError:
+                return self._err(400, "limit 必须是整数")
+            # 索引是追加式的（创建/上传/补传各写一行），这里必须**按 id 合并成最新状态**，
+            # 否则电脑端会先拿到"还没补传识别结果"的那一行，label 是空的。
+            merged = {}
+            for r in load_index():
+                rid = r.get("id")
+                if rid:
+                    merged.setdefault(rid, {}).update(r)
+            rows = [r for r in merged.values() if r.get("created_at", 0) > since]
+            rows.sort(key=lambda r: r.get("created_at", 0))
+            rows = rows[:limit]
+            # 图片下载地址返回相对路径，由电脑端拼自己配置的 base URL
+            for r in rows:
+                r["image_url"] = "/api/image/" + r["id"]
+            return self._json({"ok": True, "count": len(rows), "records": rows})
+
+        m = re.fullmatch(r"/api/image/([A-Za-z0-9_-]+)", path)
+        if m:
+            if not self._authed():
+                return self._err(401, "口令不正确")
+            rec = find_record(m.group(1))
+            if not rec:
+                return self._err(404, "记录不存在")
+            fp = os.path.join(IMG_DIR, rec["id"] + rec.get("ext", ".jpg"))
+            if not os.path.exists(fp):
+                return self._err(404, "图片文件不存在")
+            with open(fp, "rb") as fh:
+                blob = fh.read()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(len(blob)))
+            self.send_header("Content-Disposition",
+                             'attachment; filename="%s"' % os.path.basename(fp))
+            self.end_headers()
+            self.wfile.write(blob)
+            return
+
+        return self._err(404, "未知接口")
+
+    def do_POST(self):
+        u = urlparse(self.path)
+        path = u.path
+
+        # 1) 小程序创建记录
+        if path == "/api/records":
+            try:
+                meta = self._json_body()
+            except ValueError as e:
+                return self._err(400, str(e))
+            rid = uuid.uuid4().hex[:16]
+            now = time.time()
+            rec = {
+                "id": rid,
+                "created_at": now,
+                "created_at_str": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now)),
+                "device": str(meta.get("device", ""))[:64],
+                "lat": meta.get("lat"),
+                "lng": meta.get("lng"),
+                "accuracy": meta.get("accuracy"),
+                "address": str(meta.get("address", ""))[:200],
+                "note": str(meta.get("note", ""))[:500],
+                "source": "miniprogram",
+                "uploaded": False,
+            }
+            append_index(rec)
+            save_meta(rec)
+            base = os.environ.get("RELAY_PUBLIC_BASE", "").rstrip("/")
+            return self._json({
+                "ok": True,
+                "id": rid,
+                "upload_url": base + "/api/upload/" + rid,
+                "finish_url": base + "/api/finish/" + rid,
+            })
+
+        # 2) 小程序上传图片
+        m = re.fullmatch(r"/api/upload/([A-Za-z0-9_-]+)", path)
+        if m:
+            rid = m.group(1)
+            rec = find_record(rid)
+            if not rec:
+                return self._err(404, "记录不存在，请先调用 POST /api/records")
+            n = int(self.headers.get("Content-Length") or 0)
+            if n <= 0:
+                return self._err(400, "没有收到图片数据")
+            if n > MAX_UPLOAD:
+                return self._err(413, "图片超过 %d MB 上限" % (MAX_UPLOAD // 1024 // 1024))
+            blob = self._body()
+            ext = safe_ext(self.headers.get("X-Filename", ""), self.headers.get("Content-Type"))
+            os.makedirs(IMG_DIR, exist_ok=True)      # 目录被清理过也能自愈，否则会静默丢图
+            dst = os.path.join(IMG_DIR, rid + ext)
+            with open(dst, "wb") as fh:
+                fh.write(blob)
+            if os.path.getsize(dst) != len(blob):
+                return self._err(500, "图片写入不完整，请重试")
+            rec["uploaded"] = True
+            rec["bytes"] = len(blob)
+            rec["ext"] = ext
+            rec["file"] = rid + ext
+            save_meta(rec)
+            append_index(rec)          # 追加一条更新态；电脑端按 id 去重取最新
+            return self._json({"ok": True, "id": rid, "bytes": len(blob), "ext": ext})
+
+        # 3) 可选：补传元数据
+        m = re.fullmatch(r"/api/finish/([A-Za-z0-9_-]+)", path)
+        if m:
+            rid = m.group(1)
+            rec = find_record(rid)
+            if not rec:
+                return self._err(404, "记录不存在")
+            try:
+                patch = self._json_body()
+            except ValueError as e:
+                return self._err(400, str(e))
+            # 除了位置与备注，也接受**小程序端的识别结果**——
+            # 电脑端要拿它跟自己的检测结论做「端云一致性」对比，
+            # 所以这里的白名单必须包含 label/score 等字段（否则手机端白算一遍）。
+            for k in ("lat", "lng", "accuracy", "address", "note", "device",
+                      "label", "score", "boxes", "model", "elapsed_ms", "raw"):
+                if k in patch:
+                    rec[k] = patch[k]
+            rec["finished_at"] = time.time()
+            save_meta(rec)
+            append_index(rec)
+            return self._json({"ok": True, "id": rid})
+
+        return self._err(404, "未知接口")
+
+
+def main():
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 9000
+    ensure_dirs()
+    srv = ThreadingHTTPServer(("0.0.0.0", port), Handler)   # 注意绑 0.0.0.0，不是 127.0.0.1
+    n = len(load_index())
+    print("稻视界 · 云边联动中转服务已启动")
+    print("  端口      : %d" % port)
+    print("  数据目录  : %s" % DATA)
+    print("  已有记录  : %d" % n)
+    print("  拉取口令  : %s" % ("已启用（RELAY_TOKEN）" if RELAY_TOKEN else "未启用（仅本地测试可用）"))
+    print("  健康检查  : http://127.0.0.1:%d/api/ping" % port)
+    print("  按 Ctrl+C 停止")
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        print("\n已停止")
+
+
+if __name__ == "__main__":
+    main()
+
+__PART2__
+echo "B 段完成，完整字节数（应约 20000）："
+wc -c $APP/relay_server.py

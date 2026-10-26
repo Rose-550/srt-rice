@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# 【第 6 段】给已有站点加一条 /relay/ 转发（不动原有任何一行）
+# 安全措施：先备份 → 只插入 → nginx -t 校验 → 通过才 reload → 最后验证
+set -e
+cd /etc/nginx/conf.d
+
+echo "==> 1/5 备份现有配置"
+BK="rice-srt.conf.bak-relay-$(date +%s)"
+cp rice-srt.conf "$BK"
+echo "    已备份到 /etc/nginx/conf.d/$BK"
+
+echo "==> 2/5 插入 /relay/ 转发（用 Python 精确插入，不碰其它行）"
+python3 - <<'PYEOF'
+p = "/etc/nginx/conf.d/rice-srt.conf"
+s = open(p, encoding="utf-8").read()
+if "/relay/" in s:
+    print("    已存在 /relay/ 配置，跳过插入（避免重复）")
+else:
+    block = """    # ── 稻视界中转服务（新增，独立前缀，不影响原有站点）──
+    location /relay/ {
+        proxy_pass http://127.0.0.1:9000/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 120s;
+        proxy_request_buffering off;
+    }
+
+"""
+    key = "location / {\n        proxy_pass"
+    idx = s.index(key)
+    line_start = s.rindex("\n", 0, idx) + 1
+    s = s[:line_start] + block + s[line_start:]
+    open(p, "w", encoding="utf-8").write(s)
+    print("    已在 443 块内插入 /relay/ → 127.0.0.1:9000")
+PYEOF
+
+echo "==> 3/5 删掉冲突的自建配置（内容已并入上面）"
+rm -f /etc/nginx/conf.d/rice-relay.conf
+
+echo "==> 4/5 语法校验（不通过会自动中止，不会搞挂 nginx）"
+nginx -t
+
+echo "==> 5/5 更新中转服务的公网前缀并重启"
+sed -i 's|^RELAY_PUBLIC_BASE=.*|RELAY_PUBLIC_BASE=https://rice-srt.cn/relay|' /opt/rice-relay/relay.env
+systemctl restart rice-relay
+sleep 2
+systemctl reload nginx
+
+echo
+echo "=== 验证 ==="
+echo -n "原有站点是否照常（应返回 200/301/302）: "
+curl -s -o /dev/null -w "%{http_code}\n" https://rice-srt.cn/ || true
+echo -n "中转服务是否通（应返回 ok:true）: "
+curl -s https://rice-srt.cn/relay/api/ping; echo
+echo
+echo "=== 完整自检（6 项应全绿）==="
+python3 /opt/rice-relay/check_relay.py https://rice-srt.cn/relay rice-srt-2026-1014

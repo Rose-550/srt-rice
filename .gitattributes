@@ -1,0 +1,27 @@
+# 统一换行与二进制识别（Windows 项目）
+* text=auto
+*.py text
+*.md text
+*.txt text
+*.json text
+*.yaml text
+*.yml text
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.sh text eol=lf
+*.html text
+*.mjs text
+*.js text
+*.css text
+*.svg text
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.pdf binary
+*.docx binary
+*.xlsx binary
+*.pptx binary
+*.pt binary
+*.onnx binary
+*.wasm binary

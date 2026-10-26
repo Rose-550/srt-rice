@@ -1,0 +1,6 @@
+rice_leaf_roller
+rice_water_weevil
+rice_leafhopper
+bacterial_blight
+brown_spot
+rice_blast

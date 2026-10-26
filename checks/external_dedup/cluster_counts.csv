@@ -1,0 +1,108 @@
+tag,images,thr,clusters,singleton_clusters,max_cluster
+external BLB rot+mirror,2000,2,1586,1341,11
+external BLB rot+mirror,2000,4,1479,1223,13
+external BLB rot+mirror,2000,6,1436,1171,13
+external BLB rot+mirror,2000,8,1386,1113,13
+external BLB rot+mirror,2000,10,1343,1053,13
+external BLB rot+mirror,2000,12,1293,974,13
+external BLB rot+mirror,2000,16,1214,878,15
+external BLB rot+mirror,2000,20,1134,779,15
+external BLB mirror-only,2000,2,1699,1482,6
+external BLB mirror-only,2000,4,1599,1358,8
+external BLB mirror-only,2000,6,1547,1297,9
+external BLB mirror-only,2000,8,1498,1239,9
+external BLB mirror-only,2000,10,1460,1190,9
+external BLB mirror-only,2000,12,1425,1135,9
+external BLB mirror-only,2000,16,1359,1046,10
+external BLB mirror-only,2000,20,1291,963,10
+added rot+mirror,1496,2,1437,1378,2
+added rot+mirror,1496,4,1408,1324,3
+added rot+mirror,1496,6,1390,1291,3
+added rot+mirror,1496,8,1353,1227,4
+added rot+mirror,1496,10,1317,1163,4
+added rot+mirror,1496,12,1271,1082,5
+added rot+mirror,1496,16,1202,974,6
+added rot+mirror,1496,20,1118,859,7
+added mirror-only,1496,2,1491,1486,2
+added mirror-only,1496,4,1466,1440,3
+added mirror-only,1496,6,1452,1414,3
+added mirror-only,1496,8,1423,1361,4
+added mirror-only,1496,10,1394,1311,4
+added mirror-only,1496,12,1364,1255,4
+added mirror-only,1496,16,1311,1163,5
+added mirror-only,1496,20,1242,1062,7
+0 BacterialLeafBlight,2000,2,1586,1341,11
+0 BacterialLeafBlight,2000,4,1479,1223,13
+0 BacterialLeafBlight,2000,6,1436,1171,13
+0 BacterialLeafBlight,2000,8,1386,1113,13
+0 BacterialLeafBlight,2000,10,1343,1053,13
+0 BacterialLeafBlight,2000,12,1293,974,13
+0 BacterialLeafBlight,2000,16,1214,878,15
+0 BacterialLeafBlight,2000,20,1134,779,15
+1 BrownSpot,2000,2,1484,1092,6
+1 BrownSpot,2000,4,1420,1065,9
+1 BrownSpot,2000,6,1360,1032,11
+1 BrownSpot,2000,8,1301,982,11
+1 BrownSpot,2000,10,1261,933,12
+1 BrownSpot,2000,12,1220,874,12
+1 BrownSpot,2000,16,1121,750,12
+1 BrownSpot,2000,20,1044,660,12
+2 Healthy,433,2,250,112,3
+2 Healthy,433,4,250,112,3
+2 Healthy,433,6,250,112,3
+2 Healthy,433,8,250,112,3
+2 Healthy,433,10,250,112,3
+2 Healthy,433,12,250,112,3
+2 Healthy,433,16,250,112,3
+2 Healthy,433,20,250,112,3
+3 Hispa,431,2,244,109,3
+3 Hispa,431,4,244,109,3
+3 Hispa,431,6,244,109,3
+3 Hispa,431,8,244,109,3
+3 Hispa,431,10,244,109,3
+3 Hispa,431,12,244,109,3
+3 Hispa,431,16,244,109,3
+3 Hispa,431,20,244,109,3
+4 LeafBlast,449,2,249,108,3
+4 LeafBlast,449,4,247,108,5
+4 LeafBlast,449,6,246,108,6
+4 LeafBlast,449,8,244,107,12
+4 LeafBlast,449,10,243,105,12
+4 LeafBlast,449,12,242,104,12
+4 LeafBlast,449,16,242,104,12
+4 LeafBlast,449,20,241,103,12
+5 LeafScald,456,2,248,106,3
+5 LeafScald,456,4,248,106,3
+5 LeafScald,456,6,248,106,3
+5 LeafScald,456,8,248,106,3
+5 LeafScald,456,10,248,106,3
+5 LeafScald,456,12,248,106,3
+5 LeafScald,456,16,248,106,3
+5 LeafScald,456,20,248,106,3
+6 LeafSmut,2000,2,1627,1416,12
+6 LeafSmut,2000,4,1544,1354,12
+6 LeafSmut,2000,6,1479,1301,13
+6 LeafSmut,2000,8,1432,1260,13
+6 LeafSmut,2000,10,1369,1181,15
+6 LeafSmut,2000,12,1295,1091,18
+6 LeafSmut,2000,16,1180,944,20
+6 LeafSmut,2000,20,1061,808,23
+7 NarrowBrownLeafSpot,443,2,247,107,3
+7 NarrowBrownLeafSpot,443,4,247,107,3
+7 NarrowBrownLeafSpot,443,6,247,107,3
+7 NarrowBrownLeafSpot,443,8,247,107,3
+7 NarrowBrownLeafSpot,443,10,247,107,3
+7 NarrowBrownLeafSpot,443,12,247,107,3
+7 NarrowBrownLeafSpot,443,16,247,107,3
+7 NarrowBrownLeafSpot,443,20,247,107,3
+8 NeckBlast,453,2,250,106,3
+8 NeckBlast,453,4,248,104,5
+8 NeckBlast,453,6,246,103,7
+8 NeckBlast,453,8,243,101,7
+8 NeckBlast,453,10,241,100,7
+8 NeckBlast,453,12,238,98,9
+8 NeckBlast,453,16,233,96,9
+8 NeckBlast,453,20,227,93,11
+external ALL rot+mirror,8665,4,5927,4288,13
+external ALL rot+mirror,8665,8,5595,3997,13
+external ALL rot+mirror,8665,16,4979,3206,20

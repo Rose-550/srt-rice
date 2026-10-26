@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+# 【第 8 段】把小程序后端的识别结果接进来（只改 app_v2.py，+约 55 行，不动其它文件）
+set -e
+F=/opt/rice_disease/api/app_v2.py
+SVC=rice-disease
+
+echo "==> 1/5 备份"
+cp $F $F.bak-relay-$(date +%s)
+ls -la $F.bak-relay-* | tail -2
+
+echo "==> 2/5 插入转发逻辑"
+python3 - <<'PYEOF'
+import io
+s = io.open("/opt/rice_disease/api/app_v2.py", encoding="utf-8").read()
+if "_forward_to_pc_safe" in s:
+    print("    已经接入过了，跳过")
+    raise SystemExit(0)
+
+helper = '''# ── 稻视界：把识别结果转发给电脑端（2026-10-14 新增，失败绝不影响识别）──
+def _forward_to_pc_safe(upload_file, pred):
+    """把原图 + 识别结果送到本机中转（127.0.0.1:9000），电脑端主动拉取。
+
+    只用标准库（urllib），不依赖 requests；全程 try/except；
+    图片字节**同步读**（避免响应结束后上传对象被关闭），网络转发放后台线程。
+    """
+    import json as _json
+    import threading
+    import urllib.request as _ur
+
+    try:
+        upload_file.file.seek(0)
+        blob = upload_file.file.read()
+        name = getattr(upload_file, "filename", "") or "photo.jpg"
+    except Exception:
+        return
+    if not blob:
+        return
+    payload = {
+        "label": pred.get("predicted_class") or "",
+        "score": float(pred.get("confidence") or 0.0),
+        "boxes": len(pred.get("top3_predictions") or []),
+        "model": "convnextv2-v2(小程序后端)",
+    }
+
+    def _work():
+        base = "http://127.0.0.1:9000"
+        try:
+            body = _json.dumps({"device": "小程序(rice-disease)",
+                                "note": "后端自动转发"}).encode()
+            req = _ur.Request(base + "/api/records", data=body,
+                              headers={"Content-Type": "application/json"})
+            with _ur.urlopen(req, timeout=6) as r:
+                rid = (_json.loads(r.read().decode()) or {}).get("id")
+            if not rid:
+                return
+            req2 = _ur.Request(base + "/api/upload/" + rid, data=blob,
+                               headers={"X-Filename": name,
+                                        "Content-Type": "application/octet-stream"})
+            with _ur.urlopen(req2, timeout=25):
+                pass
+            req3 = _ur.Request(base + "/api/finish/" + rid,
+                               data=_json.dumps(payload).encode(),
+                               headers={"Content-Type": "application/json"})
+            with _ur.urlopen(req3, timeout=6):
+                pass
+        except Exception:
+            pass          # 转发失败绝不影响小程序的识别结果
+
+    try:
+        threading.Thread(target=_work, daemon=True).start()
+    except Exception:
+        pass
+
+
+'''
+
+anchor_c = '@app.post("/predict")'
+assert anchor_c in s
+s = s.replace(anchor_c, helper + anchor_c, 1)
+
+a_old = '''        result["filename"] = file.filename
+        return JSONResponse(content=result)'''
+a_new = '''        result["filename"] = file.filename
+        _forward_to_pc_safe(file, result)
+        return JSONResponse(content=result)'''
+assert a_old in s, "单张接口锚点没找到"
+s = s.replace(a_old, a_new, 1)
+
+b_old = '''                pred["filename"] = f.filename
+                results.append(pred)'''
+b_new = '''                pred["filename"] = f.filename
+                _forward_to_pc_safe(f, pred)
+                results.append(pred)'''
+assert b_old in s, "批量接口锚点没找到"
+s = s.replace(b_old, b_new, 1)
+
+io.open("/opt/rice_disease/api/app_v2.py", "w", encoding="utf-8").write(s)
+print("    已插入转发逻辑（+1 函数 +2 处调用）")
+
+PYEOF
+
+echo "==> 3/5 语法校验"
+/opt/rice_disease/venv/bin/python -m py_compile $F && echo "    语法 OK"
+
+echo "==> 4/5 重启小程序后端服务"
+systemctl restart $SVC
+sleep 4
+
+echo "==> 5/5 验证"
+echo -n "后端健康检查: "; curl -s http://127.0.0.1:8002/health; echo
+echo -n "中转服务:     "; curl -s http://127.0.0.1:9000/api/ping; echo
+echo
+echo "=== 用一张测试图走一遍 /predict（会真的触发转发）==="
+curl -s -o /tmp/t.jpg -w "" "https://rice-srt.cn/relay/" >/dev/null 2>&1 || true
+python3 - <<'PYX'
+import io, json, urllib.request
+from PIL import Image
+buf = io.BytesIO()
+Image.new("RGB", (300, 300), (200, 215, 190)).save(buf, format="JPEG")
+data = buf.getvalue()
+boundary = "----rice"
+body = (("--%s\r\n" % boundary).encode()
+        + b'Content-Disposition: form-data; name="file"; filename="t.jpg"\r\n'
+        + b"Content-Type: image/jpeg\r\n\r\n" + data
+        + ("\r\n--%s--\r\n" % boundary).encode())
+req = urllib.request.Request("http://127.0.0.1:8002/predict", data=body,
+        headers={"Content-Type": "multipart/form-data; boundary=" + boundary})
+try:
+    with urllib.request.urlopen(req, timeout=60) as r:
+        print("   /predict 返回:", r.read().decode()[:200])
+except Exception as e:
+    print("   /predict 失败:", e)
+PYX
+sleep 3
+echo -n "中转里的记录数（应比之前多 1）: "
+curl -s "http://127.0.0.1:9000/api/records?since=0&limit=100" -H "X-Auth-Token: rice-srt-2026-1014" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('records',[])))"
+echo
+echo "=== 完成。电脑端在程序里点「自动巡检 → 云端同步」即可取走 ==="

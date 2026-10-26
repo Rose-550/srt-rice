@@ -1,0 +1,47 @@
+<!--pages/upload/upload.wxml-->
+<view class="page">
+  <view class="hero">
+    <view class="title">稻视界 · 田间采样</view>
+    <view class="sub">拍照上传后，家里的电脑会自动接收、识别并记录到地图</view>
+  </view>
+
+  <!-- 中转服务地址：正式版必须是 https 且域名已在小程序后台配置 -->
+  <view class="card">
+    <view class="label">中转服务地址</view>
+    <input class="input" value="{{baseUrl}}" bindinput="onBaseInput"
+           placeholder="https://你的域名" confirm-type="done" />
+    <view class="hint">本地联调可填 http://<电脑局域网IP>:9000（需与手机同一 WiFi）</view>
+  </view>
+
+  <view class="card">
+    <view class="row">
+      <text class="label">定位</text>
+      <text class="value {{loc ? 'ok' : 'warn'}}">{{locText}}</text>
+    </view>
+    <button class="btn ghost" size="mini" bindtap="getLocation" disabled="{{locating}}">
+      {{locating ? '定位中…' : '重新定位'}}
+    </button>
+    <view class="hint">位置会随照片一起上传，用于在电脑端地图上落点</view>
+  </view>
+
+  <view class="card">
+    <view class="row">
+      <text class="label">照片</text>
+      <text class="value">{{photoPath ? '已选择' : '未选择'}}</text>
+    </view>
+    <button class="btn ghost" size="mini" bindtap="choosePhoto">选择照片</button>
+    <image wx:if="{{photoPath}}" class="preview" src="{{photoPath}}" mode="widthFix" />
+  </view>
+
+  <view class="card">
+    <view class="label">备注（可选）</view>
+    <input class="input" value="{{note}}" bindinput="onNoteInput" placeholder="例如：三号田东侧，叶尖发黄" />
+  </view>
+
+  <button class="btn primary" bindtap="onSubmit" loading="{{submitting}}" disabled="{{submitting || !photoPath}}">
+    {{submitting ? '上传中…' : '上传到电脑'}}
+  </button>
+
+  <view class="status {{statusType}}" wx:if="{{status}}">{{status}}</view>
+  <view class="hint" wx:if="{{lastId}}">记录编号：{{lastId}}（家里的电脑会在 30 秒内取走并识别）</view>
+</view>

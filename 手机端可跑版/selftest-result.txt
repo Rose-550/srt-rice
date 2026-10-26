@@ -1,0 +1,7 @@
+自检输出（headless Chromium，http://127.0.0.1:8765/selftest.html）
+### Result
+"\ncrossOriginIsolated = true  线程数 = 20\n加载模型…\n模型就绪，耗时 0.3 s  输入=images 输出=output0\nOK  bacterial_blight_0  300x300  推理 87 ms  ->  白叶枯病 69% [47,51,217,128] ; 白叶枯病 59% [29,116,249,187]\nOK  rice_blast_0  300x300  推理 65 ms  ->  胡麻斑病 74% [45,131,101,184]\nOK  rice_water_weevil_0  108x122  推理 70 ms  ->  稻水象甲 86% [18,4,89,122]\n自检完成"
+### Ran Playwright code
+```js
+await page.evaluate('() => document.getElementById(\'log\').textContent');
+```

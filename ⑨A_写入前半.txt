@@ -1,0 +1,232 @@
+#!/usr/bin/env bash
+# 【第 9 段 A】写入 relay_server.py 前半部分
+set -e
+APP=/opt/rice-relay
+id -u rice >/dev/null 2>&1 || useradd --system --home $APP --shell /sbin/nologin rice
+mkdir -p $APP/data
+cp $APP/relay_server.py $APP/relay_server.py.bak-$(date +%s) 2>/dev/null || true
+cat > $APP/relay_server.py <<'__PART1__'
+# -*- coding: utf-8 -*-
+"""稻视界 · 云边联动（方案 C）中转服务端
+
+只用 Python 标准库，零依赖。本地测试和丢到云服务器上跑的是同一份代码。
+
+接口：
+    GET  /api/ping                      健康检查
+    POST /api/records                   创建记录，返回 record_id 与上传地址（小程序调用）
+    POST /api/upload/<record_id>        上传图片二进制（小程序调用）
+    POST /api/finish/<record_id>        可选：补传/更新元数据（小程序调用）
+    GET  /api/records?since=&limit=     增量拉取记录（电脑端调用）
+    GET  /api/image/<record_id>         下载图片（电脑端调用）
+
+存储：
+    data/records.jsonl      记录索引，一行一条，方便增量拉取
+    data/images/<id>.jpg    原始图片
+    data/meta/<id>.json     单条元数据
+
+启动：
+    python relay_server.py            # 本地，端口 9000
+    python relay_server.py 8080       # 指定端口
+
+部署到云服务器时：
+    1) 用 systemd / supervisor / nohup 常驻
+    2) 前面挂 Nginx 并配好 HTTPS（小程序正式版要求 https 域名）
+    3) 设置环境变量 RELAY_TOKEN 作为电脑端拉取口令
+"""
+import json
+import os
+import re
+import ssl
+import sys
+import threading
+import time
+import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse, parse_qs
+
+# ── 手机传图页（公网版）────────────────────────────────────────────
+# 手机在**任何网络**（4G/校园网/外地）打开 https://你的域名/relay/ 就能传原图，
+# 不需要和小程序、也不需要和电脑在同一网络。页内请求全部用**相对路径**，
+# 这样 nginx 把 /relay/ 前缀剥掉后依然能正确命中 /api/*。
+RELAY_UPLOAD_PAGE = """<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>稻视界 · 田间传图</title><style>
+body{font:16px/1.7 -apple-system,"Microsoft YaHei",sans-serif;margin:0;padding:18px;
+     background:#f4f7f5;color:#22312b}
+h2{margin:0 0 4px;font-size:20px}.tip{color:#5f6b66;font-size:14px;margin-bottom:14px}
+.box{background:#fff;border-radius:12px;padding:16px;box-shadow:0 2px 10px rgba(0,0,0,.07)}
+.btn{display:block;padding:15px;border-radius:10px;background:#2e7d5b;color:#fff;
+     font-weight:600;text-align:center;margin-bottom:10px}
+.btn.ghost{background:#e8efeb;color:#22312b}
+.picker{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}
+#bar{height:8px;border-radius:4px;background:#e8efeb;overflow:hidden;margin-top:10px;display:none}
+#bar i{display:block;height:100%;width:0;background:#2e7d5b;transition:width .15s}
+#log{font-size:13px;color:#5f6b66;margin-top:10px;white-space:pre-wrap}
+li{font-size:13px;padding:6px 0;border-bottom:1px solid #eef2ef}
+ul{list-style:none;padding:0;margin:0}
+</style></head><body>
+<h2>稻视界 · 田间传图</h2>
+<div class="tip">手机在任何网络都能传（4G 也行）。原图直传不压缩，电脑端会自动取走并识别。<br>
+<b style="color:#c62828">⚠ 只有在拍摄现场才点「我此刻就在这块地里」</b>——它记的是你<b>现在</b>的位置。
+回家后再传老照片请留空，回电脑上手动落点才准。</div>
+<div class="box">
+  <label class="btn" for="fc">📷 拍照</label>
+  <label class="btn ghost" for="f">🖼 从相册选</label>
+  <input id="f" class="picker" type="file" accept="image/*" multiple>
+  <input id="fc" class="picker" type="file" accept="image/*" capture="environment">
+  <div class="row" style="margin-top:8px">
+    <button id="loc" type="button" style="flex:1;padding:11px;border-radius:9px;border:0;
+            background:#e8efeb;color:#22312b;font-size:15px">📍 我此刻就在这块地里</button>
+    <span id="locout" style="font-size:12px;color:#5f6b66;align-self:center">未取</span>
+  </div>
+  <div id="bar"><i></i></div>
+  <div id="log">选好照片会自动上传。</div>
+</div>
+<div class="box"><div style="font-weight:600;margin-bottom:6px">已传 <span id="n">0</span> 张</div>
+<ul id="list"></ul></div>
+<script>
+var $=function(i){return document.getElementById(i);};
+var items=[];
+function render(){
+  $('n').textContent=items.length;
+  $('list').innerHTML=items.map(function(it){
+    return '<li>'+it.name+' '+(it.ok?'✅ 已送达电脑端待取':'❌ '+it.err)+'</li>';}).join('');
+}
+var curLoc = null;   // 安卓相册选择器会剥掉 EXIF 定位，所以传图时现取一次
+function askLoc(){
+  var o=$('locout');
+  if(!navigator.geolocation){o.textContent='不支持定位';return;}
+  o.textContent='定位中…';
+  navigator.geolocation.getCurrentPosition(function(p){
+    curLoc={lat:p.coords.latitude,lng:p.coords.longitude,acc:p.coords.accuracy};
+    o.textContent='✓ 已取（±'+Math.round(p.coords.accuracy||0)+'m）';
+  },function(e){
+    o.textContent='✗ '+(e.message||'取不到，请允许定位权限');
+  },{enableHighAccuracy:true,timeout:12000,maximumAge:0});
+}
+$('loc').onclick=askLoc;
+function up(file,onp){
+  return new Promise(function(res,rej){
+    // ① 建记录（相对路径 → /relay/api/records）
+    fetch('api/records',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({device:(navigator.userAgent||'').slice(0,60),note:'网页直传',
+        lat:curLoc?curLoc.lat:null,lng:curLoc?curLoc.lng:null,
+        accuracy:curLoc?curLoc.acc:null})})
+    .then(function(r){return r.json();}).then(function(j){
+      if(!j||!j.ok){rej(new Error('建记录失败'));return;}
+      // ② 传图（原始字节）
+      var x=new XMLHttpRequest();
+      x.open('POST','api/upload/'+j.id);
+      x.setRequestHeader('Content-Type','application/octet-stream');
+      x.setRequestHeader('X-Filename',file.name||'photo.jpg');
+      x.upload.onprogress=function(e){if(e.lengthComputable&&onp)onp(e.loaded/e.total);};
+      x.onload=function(){try{res(JSON.parse(x.responseText));}catch(e){rej(new Error('响应异常'));}};
+      x.onerror=function(){rej(new Error('网络中断'));};
+      x.send(file);
+    }).catch(rej);
+  });
+}
+async function handle(files){
+  if(!files||!files.length)return;
+  $('bar').style.display='block';
+  for(var i=0;i<files.length;i++){
+    var f=files[i],it={name:f.name,ok:false,err:''};items.push(it);render();
+    $('log').textContent='正在上传 '+(i+1)+'/'+files.length+'：'+f.name;
+    try{
+      var r=await up(f,function(pp){$('bar').firstElementChild.style.width=
+        Math.round(((i+pp)/files.length)*100)+'%';});
+      it.ok=!!(r&&r.ok); if(!it.ok)it.err=(r&&r.error)||'失败';
+    }catch(e){it.err=e.message;}
+    render();
+  }
+  $('bar').firstElementChild.style.width='100%';
+  $('log').textContent='完成。电脑端在程序里点「自动巡检 → 云端同步」就能取走。';
+  setTimeout(function(){$('bar').style.display='none';$('bar').firstElementChild.style.width='0';},1200);
+  $('f').value='';$('fc').value='';
+}
+$('f').onchange=function(){handle(this.files);};
+$('fc').onchange=function(){handle(this.files);};
+</script></body></html>"""
+
+ROOT = os.path.dirname(os.path.abspath(__file__))
+DATA = os.path.join(ROOT, "data")
+IMG_DIR = os.path.join(DATA, "images")
+META_DIR = os.path.join(DATA, "meta")
+INDEX = os.path.join(DATA, "records.jsonl")
+
+MAX_UPLOAD = 20 * 1024 * 1024          # 单张图片上限 20MB
+LOCK = threading.Lock()                # 索引写入串行化
+RELAY_TOKEN = os.environ.get("RELAY_TOKEN", "")   # 为空则不校验（仅建议本地测试时为空）
+
+ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".heic"}
+
+
+def ensure_dirs():
+    for d in (DATA, IMG_DIR, META_DIR):
+        os.makedirs(d, exist_ok=True)
+
+
+def load_index():
+    """读全部记录（按时间升序）。数据量小时足够；上万条再换 sqlite。"""
+    if not os.path.exists(INDEX):
+        return []
+    out = []
+    with open(INDEX, "r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                out.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue          # 跳过写坏的行，不让一条脏数据卡死整个接口
+    out.sort(key=lambda r: r.get("created_at", 0))
+    return out
+
+
+def append_index(rec):
+    # 目录不存在就建：全新部署（data/ 还没有）时，第一条记录会直接写失败——
+    # 之前没做这步，手机端第一次上传就报 500。
+    os.makedirs(os.path.dirname(INDEX) or ".", exist_ok=True)
+    with LOCK:
+        with open(INDEX, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())     # 断电也不丢记录
+
+
+def save_meta(rec):
+    os.makedirs(META_DIR, exist_ok=True)
+    with open(os.path.join(META_DIR, rec["id"] + ".json"), "w", encoding="utf-8") as fh:
+        json.dump(rec, fh, ensure_ascii=False, indent=2)
+
+
+def find_record(rid):
+    for r in load_index():
+        if r["id"] == rid:
+            return r
+    return None
+
+
+def safe_ext(name, ctype):
+    ext = os.path.splitext(name or "")[1].lower()
+    if ext in ALLOWED_EXT:
+        return ext
+    m = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/bmp": ".bmp"}
+    return m.get((ctype or "").split(";")[0].strip().lower(), ".jpg")
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "RiceRelay/1.0"
+
+    # ---------- 工具 ----------
+    def _json(self, obj, code=200):
+        body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+__PART1__
+echo "A 段完成，当前字节数："
+wc -c $APP/relay_server.py

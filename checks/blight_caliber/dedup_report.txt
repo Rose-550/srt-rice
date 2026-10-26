@@ -1,0 +1,30 @@
+
+外部哈希成功 2000/2000，项目哈希成功 8396/8396
+
+=== ① 外部 2000 张内部重复（THR=4）===
+  近重复对: 597
+  簇总数: 1628（其中多图簇 224 个）
+  卷入重复的图: 596 / 2000 = 29.8%
+  最大的几个簇（簇内张数）: 9, 6, 6, 6, 5, 5, 5, 5
+  [!] 最大簇里的样本:
+      r6k_test_img_blb_1_JPG_jpg.rf.f3809ebef52f5b539d01669cd618c743.jpg
+      r6k_train_blight_orig_007_JPG_jpg.rf.0ad505602239a04820dcd2b51bb18b4b.jpg
+      r6k_train_blight_orig_007_JPG_jpg.rf.21266ad9a71b1347373ff4cee31de179.jpg
+      r6k_train_blight_orig_007_JPG_jpg.rf.ac37e0cf48f4c5886f1153fd426e08f2.jpg
+      r6k_train_img_blb_1_JPG_jpg.rf.63ade21064dade85539fcf73269b06a3.jpg
+      r6k_train_img_blb_1_JPG_jpg.rf.6abe51bf931f7ae3cb30d98d4502e0a7.jpg
+
+=== ② 外部 2000 张 ↔ 项目 8396 张 跨集近重复（THR=4）===
+  跨集近重复对: 1898
+  外部侧卷入: 289 / 2000 = 14.4%
+  明细 -> C:\Users\罗浔\Desktop\rice\checks\blight_caliber\ext_vs_project_leaks.csv
+  距离分档: 0:225, 1:538, 2:436, 3:397, 4:302
+  外部内部明细 -> C:\Users\罗浔\Desktop\rice\checks\blight_caliber\ext_internal_dups.csv
+
+=== ③ 文件名增强线索（外部 2000 张中）===
+  含 ".rf." 的: 2000 张
+  含 "orig" 的: 448 张
+  含 "rotated" 的: 443 张
+  含 "_aug_" 的: 255 张
+
+总耗时 17.2 秒

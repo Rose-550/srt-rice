@@ -1,0 +1,70 @@
+=== external dataset provenance (source-name based) ===
+class                     images     names  families
+BacterialLeafBlight         2000       635       571
+BrownSpot                   2000       568       568
+Healthy                      433       250       250
+Hispa                        431       244       244
+LeafBlast                    449       249       249
+LeafScald                    456       248       248
+LeafSmut                    2000       583       523
+NarrowBrownLeafSpot          443       247       247
+NeckBlast                    453       250       250
+ALL                         8665      3183      3059
+
+=== the 1496 images actually merged into training ===
+files on disk            : 1496
+distinct source names    : 580
+distinct families (orig/rotated merged): 532
+group-size distribution  : 1x:279, 2x:115, 3x:26, 4x:39, 5x:37, 6x:43, 7x:27, 8x:10, 9x:1, 10x:1, 11x:2
+largest source groups    : r6k_train_img_blb_19_JPG(11), r6k_train_img_blb_51(11), r6k_train_blight_rotated_024_PNG(10), r6k_train_img_blb_30_JPG(9), r6k_train_blight_orig_035_JPG(8)
+
+=== residual leakage of the ADDED images into project val (rot+mirror invariant) ===
+  dist <= 0   : to project val = 0      to project train = 2   
+  dist <= 2   : to project val = 1      to project train = 8   
+  dist <= 4   : to project val = 5      to project train = 26  
+  dist <= 8   : to project val = 15     to project train = 52  
+  dist <= 16  : to project val = 28     to project train = 80  
+
+=== added images within dist<=8 of a project VAL image (raw evidence) ===
+  d=3   ext: r6k_train_blight_orig_042_jpg.rf.dcd4134aeac02b3d7d9524c6999b89af.jpg
+        val: bacterial_blight_109.jpg
+  d=2   ext: r6k_train_blight_orig_042_jpg.rf.dcd4134aeac02b3d7d9524c6999b89af.jpg
+        val: bacterial_blight_13.jpg
+  d=7   ext: r6k_train_blight_orig_043_jpg.rf.2b761e4127c1da9bbe87c0e7691d920f.jpg
+        val: bacterial_blight_374.jpg
+  d=3   ext: r6k_train_blight_orig_074_JPG_jpg.rf.373f915cb33ed8ffee1ddb05c3c60810.jpg
+        val: bacterial_blight_142.jpg
+  d=8   ext: r6k_train_blight_orig_076_jpg.rf.f547fc47baaf15dd8db572a7bd88ba3c.jpg
+        val: bacterial_blight_144.jpg
+  d=8   ext: r6k_train_blight_orig_076_jpg.rf.f547fc47baaf15dd8db572a7bd88ba3c.jpg
+        val: bacterial_blight_47.jpg
+  d=5   ext: r6k_train_blight_rotated_022_PNG_jpg.rf.73c81df2396495da81d0359e1067e2bc.jpg
+        val: bacterial_blight_1577.jpg
+  d=5   ext: r6k_train_blight_rotated_024_PNG_jpg.rf.4cb504ffc4984565761321866d86cbbd.jpg
+        val: bacterial_blight_1579.jpg
+  d=6   ext: r6k_train_blight_rotated_024_PNG_jpg.rf.d787a9e996abf026681a7569e1f692ab.jpg
+        val: bacterial_blight_1579.jpg
+  d=8   ext: r6k_train_blight_rotated_058_jpg.rf.425d6f6a7fdfa5d1b74aa35dc3d3819e.jpg
+        val: bacterial_blight_29.jpg
+  d=5   ext: r6k_train_blight_rotated_062_JPG_jpg.rf.602ef4fd3806f789e87e92d8d2a65ef1.jpg
+        val: bacterial_blight_129.jpg
+  d=3   ext: r6k_train_blight_rotated_062_JPG_jpg.rf.602ef4fd3806f789e87e92d8d2a65ef1.jpg
+        val: bacterial_blight_33.jpg
+  d=4   ext: r6k_train_blight_rotated_074_JPG_jpg.rf.37a566d8c212971b0db8f7a2f38a9da2.jpg
+        val: bacterial_blight_141.jpg
+  d=7   ext: r6k_train_blight_rotated_079_jpg.rf.1a81cffbeb3f99985b93c8c7b11b3256.jpg
+        val: bacterial_blight_146.jpg
+  d=8   ext: r6k_val_blight_rotated_004_PNG_jpg.rf.693d6f98baa367f540efcbf2081eb371.jpg
+        val: bacterial_blight_1557.jpg
+  d=4   ext: r6k_train_blight_orig_022_PNG_jpg.rf.b74f66b4ff1fea7af1bd6f805392a57a.jpg
+        val: bacterial_blight_1577.jpg
+  d=6   ext: r6k_train_blight_rotated_076_jpg.rf.520e7fc7cb6f381ba8296ed3fa024883.jpg
+        val: bacterial_blight_143.jpg
+  d=6   ext: r6k_train_blight_rotated_076_jpg.rf.af4bc982964c36b66b444d4cafa3e651.jpg
+        val: bacterial_blight_143.jpg
+
+=== hash-identical (dist 0) external <-> project TRAIN examples ===
+  ext: r6k_train_blight_orig_048_jpg.rf.c449e2f10a228521c09a93b8efc9b392.jpg
+  train: bacterial_blight_115.jpg, bacterial_blight_153.jpg, bacterial_blight_811.jpg, bacterial_blight_848.jpg
+  ext: r6k_train_blight_orig_074_JPG_jpg.rf.373f915cb33ed8ffee1ddb05c3c60810.jpg
+  train: bacterial_blight_45.jpg
