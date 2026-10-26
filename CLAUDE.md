@@ -63,7 +63,7 @@
 
 - `config.json` 含**明文 API Key**（DeepSeek / DashScope）与 relay token，已被 `.gitignore` 排除。
   **不要把内容打印到对话、复制到别处、写进文档或提交到任何仓库。**
-- 项目当前**没有 git 仓库**（有 `.gitignore` 但无 `.git`）。执行 `git init` 或任何批量移动前先征得同意。
+- 项目已初始化 git 仓库（`main` 分支，基线 tag `baseline-20261026`）。批量移动/回滚前先 `git status`；`config.json`、数据集、权重、日志和大文件已由 `.gitignore` 排除。
 
 ## 检索与性能提示
 
