@@ -1,0 +1,19 @@
+# 稻视界可选功能依赖（按需安装）
+#
+#   python -m pip install -r requirements-optional.txt
+
+# 语音识别（Vosk）
+vosk==0.3.45
+sounddevice==0.5.6
+
+# 本地语音合成（ChatTTS / Piper）
+ChatTTS==0.2.5
+transformers>=4.41,<5
+torchaudio==2.5.1
+piper-tts==1.8.0
+
+# Windows SAPI 兜底
+pywin32==311
+
+# Word 报告生成（scripts/gen_report.py）
+python-docx>=1.1.0

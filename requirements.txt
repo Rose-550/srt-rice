@@ -1,0 +1,21 @@
+# 稻视界桌面端核心依赖（Python 3.10）
+#
+# 先安装 PyTorch（二选一），再安装本文件：
+#   GPU (CUDA 12.1):
+#     pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
+#   CPU:
+#     pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
+#
+# 然后：
+#   python -m pip install -r requirements.txt
+
+PyQt5==5.15.11
+PyQtWebEngine==5.15.7
+PyQt-Fluent-Widgets==1.11.2
+ultralytics==8.4.12
+opencv-python==4.13.0.92
+Pillow==11.1.0
+numpy==2.0.1
+requests==2.32.5
+markdown==3.10.2
+websockets==16.1.1
