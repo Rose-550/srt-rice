@@ -164,3 +164,12 @@ venv/
 # ════════ 7. ⚠ 含明文 API Key / relay token，绝对不进版本库 ════════
 config.json
 *.local.json
+
+# ════════ 8. 工作区材料：只留本地，不入库 ════════
+# 这些目录/文件是文档、比赛材料或历史归档；磁盘上保留，但不进 GitHub
+AI+教育大赛/
+科普/
+docs/
+大挑/
+scripts/*challenge*
+scripts/capture_hd_shots.py

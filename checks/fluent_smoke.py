@@ -432,8 +432,25 @@ _t_docx, _e_docx = m.extract_text_from_file(_docx)
 check("DOCX 能提取正文（zip+XML，不依赖 python-docx）",
       not _e_docx and "破口期" in _t_docx and "齐穗期" in _t_docx, (_e_docx, _t_docx[:40]))
 
-# PDF：用项目里现成的 PDF 验证随程序分发的 pypdf
-_pdf_path = Path(m.res_path("docs/reports/Rice_Pest_System_Learning_Plan.pdf"))
+# PDF：现场生成一个最小 PDF，验证随程序分发的 pypdf（不依赖仓库外文档）
+sys.path.insert(0, str(ROOT / "vendor"))
+from pypdf import PdfWriter
+from pypdf.generic import DecodedStreamObject, NameObject, DictionaryObject
+_pdf_path = OUT / "_smoke_sample.pdf"
+_pdf_text = ("This is a self contained PDF text extraction test for the rice project. " * 5)
+_w = PdfWriter()
+_p = _w.add_blank_page(width=612, height=792)
+_s = DecodedStreamObject()
+_s.set_data(("BT /F1 12 Tf 72 720 Td (%s) Tj ET" % _pdf_text).encode("latin-1"))
+_p[NameObject("/Contents")] = _w._add_object(_s)
+_font = DictionaryObject({NameObject("/Type"): NameObject("/Font"),
+                          NameObject("/Subtype"): NameObject("/Type1"),
+                          NameObject("/BaseFont"): NameObject("/Helvetica")})
+_font_ref = _w._add_object(_font)
+_p[NameObject("/Resources")] = DictionaryObject(
+    {NameObject("/Font"): DictionaryObject({NameObject("/F1"): _font_ref})})
+with open(_pdf_path, "wb") as _f:
+    _w.write(_f)
 _t_pdf, _e_pdf = m.extract_text_from_file(_pdf_path)
 check("PDF 能提取正文（随程序分发的 pypdf）", not _e_pdf and len(_t_pdf) > 200,
       (_e_pdf, len(_t_pdf)))

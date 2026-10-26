@@ -963,6 +963,7 @@ add_para('        年        月        日')
 # ============================================================
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 output_path = os.path.join(ROOT, 'docs', 'reports', '稻视界_中期检查报告_综合版.docx')
+os.makedirs(os.path.dirname(output_path), exist_ok=True)
 doc.save(output_path)
 print(f"Report saved to: {output_path}")
 print(f"File size: {os.path.getsize(output_path)} bytes")
