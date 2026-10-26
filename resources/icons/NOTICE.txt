@@ -1,0 +1,58 @@
+图标素材来源 / Attribution
+=========================
+
+resources/icons/<tone>/*.png 由 Lucide 图标集（https://lucide.dev）的 SVG 渲染而来。
+SVG 源文件保留在 resources/icons/_src/，转换脚本为项目根目录的 make_icons.py。
+
+三种色调（由 make_icons.py 批量生成，改颜色只需改脚本里的 TONES 再跑一次）：
+  green/  南农绿 #00783C  —— 浅色背景：AI 分析面板、状态栏、页面标题
+  white/  白色   #FFFFFF  —— 深色按钮：南农绿/红色大按钮
+  gray/   灰蓝   #647878  —— 标题栏小按钮、次要图标按钮
+
+Lucide 使用 ISC 许可证，允许商用、修改与再分发，只需保留版权与许可声明。
+
+--------------------------------------------------------------------
+Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2022
+as part of Feather (MIT). All other copyright (c) for Lucide are held
+by Lucide Contributors 2022.
+
+ISC License
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+--------------------------------------------------------------------
+
+图标清单（图标名 -> 用在哪）
+  clipboard-list   AI 回答：防治 / 治理 / 方案 / 措施 / 建议
+  pill             AI 回答：药剂 / 用药 / 农药
+  stethoscope      AI 回答：诊断 / 症状 / 判断 / 识别
+  sprout           AI 回答：农业 / 栽培 / 耕作 / 田间；AI 面板空态
+  triangle-alert   AI 回答：注意 / 警告 / 严重 / 风险；错误提示
+  bug              AI 回答：生物防治 / 天敌 / 寄生
+  clipboard-check  AI 回答：综合 / 总结 / 汇总
+  cloud-sun        AI 回答：气候 / 天气 / 环境 / 湿度
+  loader-circle    AI 分析进行中 / 模型识别中
+  zap              首页：模型已就绪
+  camera           首页：拍照上传；图片识别页标题
+  video            首页：打开摄像头；摄像头页标题
+  log-out          首页：退出识别
+  settings         首页：API 设置
+  folder-open      图片识别页：从电脑选择
+  house            各页：返回首页 / 停止识别
+  play             结果页：识别下一张
+  image            结果页：上传图片追问；图片占位卡
+  arrow-left       标题栏：后退
+  arrow-right      标题栏：前进
+  minus            标题栏：最小化
+  maximize         标题栏：进入全屏
+  minimize         标题栏：退出全屏
+  x                标题栏：关闭（悬停变白色）

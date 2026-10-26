@@ -29,7 +29,7 @@
 | 模型 | `best.pt`、`yolov8n.pt`、`yolo26n.pt` | 部署权重 + 训练基座权重 |
 | 资源 | `resources/`、`vendor/`、`手机端可跑版/` | 字体/图标/知识库/前端库/端侧 App |
 
-> `icons/`、`formulas/`、`config/` 目前未被代码引用，待归档；`maps/` 是程序启动时重写的运行时目录（见第三节）。
+> `icons/`、`formulas/`、`config/` 已归档（`archive/versions/`、`docs/images/formulas/`）；`maps/` 是程序启动时重写的运行时目录（见第三节）。
 | 配置 | `config.json`、`settings.ini`、`schedule.json` | 运行时读写（config.json 已 gitignore） |
 | 演示样本 | `手机端可跑版/samples/`、`dataset_fieldlike/images/val/`、`dataset_splitfix/images/val/` | 程序内“可用图片目录” |
 
@@ -58,13 +58,16 @@
 | `cv_splits/`（若存在） | 5 折交叉验证划分 | 只读 |
 
 - **现行对外基准**：簇级 5 折，mAP50 **0.9079 ± 0.0050**、mAP50-95 **0.5311 ± 0.0056**（YOLOv8n，见 [docs/实验记录.md](docs/实验记录.md) 实验十四）。
-- 训练/数据脚本（`download_rice_dataset.py`、`fix_pt_names.py`、`cv_split.py` 等）建议放 `scripts/`，用绝对路径或 `Path(__file__)` 定位。
+- 训练/数据脚本已放 `scripts/`（`download_rice_dataset.py`、`fix_pt_names.py`、`make_icons.py`、`get_asr_model.py` 等），用 `Path(__file__).parent.parent` 定位项目根。
 
 ## 五、文档与子项目
 
 | 目录 | 内容 |
 |---|---|
-| `docs/` | 实验记录、数据台账、体检报告、使用手册、设计规范、参赛材料、调研报告 |
+| `docs/` | 实验记录、数据台账、体检报告、使用手册、参赛材料、调研报告 |
+| `docs/design/` | 设计规范与界面截图（原根目录 `设计规范.md` + `fluent_*.png`） |
+| `docs/mobile/` | 手机端可行性评估、调研报告、路线图 |
+| `docs/reference/` | 教程/参考资料（`yolo-for-beginners.html`） |
 | `docs/reports/` | Word/PDF 正式报告（中期报告、详细报告等，按版本归档） |
 | `docs/deploy/` | Nginx/HTTPS/中转/小程序部署笔记（①~⑨ 等） |
 | `docs/images/` | 文档配图、界面截图（`design/` 设计对比、`media/` 视频） |
@@ -99,7 +102,19 @@
 
 ## 八、整理状态（2026-10-26）
 
-- 已初始化 Git，基线 tag `baseline-20261026`；根目录从 175 个可见条目降到约 70 个。
+- 已初始化 Git，基线 tag `baseline-20261026`；根目录从 175 个可见条目降到约 50 个。
 - 已归档：历史版本、旧权重、训练日志、旧 `images/`+`labels/`+`dataset.yaml`、`build/`、`dist/`、`备份/`、`来时路/`、`reports/_scratch/`。
-- 已归位：报告 → `docs/reports/`，部署笔记 → `docs/deploy/`，截图 → `docs/images/design/`，演示页 → `docs/web/`。
-- 待处理：`icons/`、`formulas/`、`config/`、`设计规范.md`+`fluent_*.png`、`mobile-research-report.md`、`scripts/` 迁移、`dataset_*/` 迁移。
+- 已归位：报告 → `docs/reports/`，部署笔记 → `docs/deploy/`，截图 → `docs/images/design/`，演示页 → `docs/web/`，设计规范 → `docs/design/`，手机端文档 → `docs/mobile/`，工具脚本 → `scripts/`。
+- 待处理：`dataset_*/` 迁移（要改代码和 yaml 绝对路径）、大资源补齐口径、`大挑/`（149MB，未入库）、空目录清理。
+
+## 九、克隆后需要补齐的资源
+
+| 资源 | 获取方式 |
+|---|---|
+| `best.pt` | 从 `runs/detect/yolov8n_clean/weights/best.pt` 复制（见 `checks/deploy_swap/部署记录.md`） |
+| `resources/fonts/` | 字体包（约 49MB，本地备份） |
+| `resources/asr/` | `python scripts/get_asr_model.py` |
+| `resources/tts/` | `python scripts/get_tts_model.py` |
+| `resources/models/` | 3D 模型（约 32MB，本地备份） |
+| `手机端可跑版/model.onnx` 等 | 端侧模型（本地备份） |
+| `config.json` | 按自己的 API Key 新建，**不要提交** |

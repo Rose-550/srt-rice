@@ -103,24 +103,21 @@ Thumbs.db
 desktop.ini
 .DS_Store
 
-# ════════ 4. 资源与子项目：只留代码/文字，大资源走本地备份 ════════
+# ════════ 4. 资源与子项目：小资源入库，大资源走本地补齐 ════════
+# 大模型/字体/语音模型不入库，克隆后用 scripts/ 里的脚本或本地备份补齐（见 README）
 resources/asr/
 resources/tts/
 resources/models/
 resources/fonts/
-resources/brand/
-resources/icons/
-resources/*.png
-resources/*.ico
 resources/*.bak*
-resources/treatment/**/*.png
-vendor/
+!resources/icon.ico
 
-手机端可跑版/samples/
-手机端可跑版/vendor/
 手机端可跑版/*.png
 手机端可跑版/*.wasm
 手机端可跑版/*.onnx
+
+# 大挑参赛材料（149MB，本地保留，不入库）
+大挑/
 
 AI+教育大赛/素材/
 AI+教育大赛/素材截图/

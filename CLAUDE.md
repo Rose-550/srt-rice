@@ -23,13 +23,13 @@
 
 - **根目录相对路径写死**：主程序按 `BASE_DIR` 找资源。以下必须留在根目录，移动即功能失效：
   `rice_dp1_fluent.py`、`rice_geo.py`、`rice_3d.py`、`edge_tts_lite.py`、`3d_viewer.html`、
-  `best.pt`、`resources/`、`vendor/`、`icons/`、`formulas/`、`config/`、`maps/`、`手机端可跑版/`、
-  `手机端可跑版/samples/`、`dataset_fieldlike/images/val/`、`dataset_splitfix/images/val/`。
+  `best.pt`、`resources/`、`vendor/`、`手机端可跑版/`、`手机端可跑版/samples/`、
+  `dataset_fieldlike/images/val/`、`dataset_splitfix/images/val/`。
 - **根目录的版本副本是历史，不要当入口**：`rice_dp1*.py` 的其他副本、`*.diff`、`main.py`、`1.py`、`rice_1.py`、
   `deep learning.py` 都不是当前程序。改动只改 `rice_dp1_fluent.py`，**不要再生成 `xxx - 副本 (2).py` 这类文件**。
 - **运行时目录由程序自己写，不要手工放文件**：`sessions/`、`inbox/`、`watch/`、`reports/`、`logs/`、
   `cache/`、`result/`、`training/`、`teaching/`、`geo/`、`spray/`、`maps/`。
-- 新增一次性脚本放 `scripts/`（目前尚未创建，需要时再建）；新文档放 `docs/`；临时验证产物放
+- 新增一次性脚本放 `scripts/`；新文档放 `docs/`；临时验证产物放
   `reports/_scratch/`；废弃文件只归档到 `archive/YYYY-MM/`，**不删除**。
 
 ## 数据规则
@@ -56,7 +56,7 @@
 - 训练耗时长（单次约 0.7–1 小时），**未经用户明确要求不要启动训练**；启动前确认没有别的进程占 GPU。
 - 产物进 `runs/detect/<name>/`；根目录 `best.pt` 是部署权重，由 `runs/detect/yolov8n_clean/weights/best.pt`
   复制而来（见 `checks/deploy_swap/部署记录.md`），**换权重需同步更新该记录**。
-- 训练日志编码不一致：`train_yolov8n_clean.console.log` 是 **UTF-16LE**，其余是 UTF-8。用脚本读之前先转码，
+- 训练日志编码不一致：`logs/training/train_yolov8n_clean.console.log` 是 **UTF-16LE**，其余是 UTF-8。用脚本读之前先转码，
   否则中文用户名会被吞成 `C:\Users\\Desktop\...`。这些日志是数字溯源的证据，**不要删**。
 
 ## 安全
