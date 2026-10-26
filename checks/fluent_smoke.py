@@ -433,7 +433,7 @@ check("DOCX 能提取正文（zip+XML，不依赖 python-docx）",
       not _e_docx and "破口期" in _t_docx and "齐穗期" in _t_docx, (_e_docx, _t_docx[:40]))
 
 # PDF：用项目里现成的 PDF 验证随程序分发的 pypdf
-_pdf_path = Path(m.res_path("Rice_Pest_System_Learning_Plan.pdf"))
+_pdf_path = Path(m.res_path("docs/reports/Rice_Pest_System_Learning_Plan.pdf"))
 _t_pdf, _e_pdf = m.extract_text_from_file(_pdf_path)
 check("PDF 能提取正文（随程序分发的 pypdf）", not _e_pdf and len(_t_pdf) > 200,
       (_e_pdf, len(_t_pdf)))
