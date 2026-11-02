@@ -10638,13 +10638,16 @@ class WatchInterface(QWidget):
         conf_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         h.addWidget(conf_lbl)
 
-        sev = str(rec.get("severity") or "")
-        sev_kind = {"重": "red", "中": "amber", "轻": "green", "无": "grey"}.get(sev, "grey")
+        sev_raw = str(rec.get("severity") or "").strip()
+        sev, sev_kind = self._severity_display(sev_raw)
         sev_box = QWidget(row)
         sev_box.setFixedWidth(self.COL_SEV)
         sb = QHBoxLayout(sev_box)
         sb.setContentsMargins(0, 0, 0, 0)
-        sb.addWidget(self._chip(sev or "未评估", sev_kind, sev_box), 0, Qt.AlignCenter)
+        sev_chip = self._chip(sev, sev_kind, sev_box)
+        if sev_raw and sev_raw != sev:
+            sev_chip.setToolTip(sev_raw)
+        sb.addWidget(sev_chip, 0, Qt.AlignCenter)
         h.addWidget(sev_box)
 
         agree = rec.get("verify_agree")
@@ -10688,6 +10691,15 @@ class WatchInterface(QWidget):
             if w is not None:
                 w.setParent(None)
                 w.deleteLater()
+
+    @staticmethod
+    def _severity_display(raw):
+        """台账里的强度可能是「未评估（手机端）」这类长文本；表格只显示短 chip，
+        原文由调用方放进 tooltip，避免居中裁切后变成半截字。"""
+        raw = str(raw or "").strip()
+        text = raw if raw in ("重", "中", "轻", "无") else "未评估"
+        kind = {"重": "red", "中": "amber", "轻": "green"}.get(text, "grey")
+        return text, kind
 
     @staticmethod
     def _row_from_csv(r):

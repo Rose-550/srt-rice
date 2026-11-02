@@ -143,6 +143,11 @@ check("自动巡检表格最多显示 8 行", wi.box.count() == 8, wi.box.count(
 check("来源筛选计数正确（小程序 5）",
       wi._filter_btns["小程序"].text() == "小程序 5",
       wi._filter_btns["小程序"].text())
+check("强度长文本归一为「未评估」（不再裁切）",
+      m.WatchInterface._severity_display("未评估（手机端）") == ("未评估", "grey")
+      and m.WatchInterface._severity_display("重") == ("重", "red")
+      and m.WatchInterface._severity_display("") == ("未评估", "grey"),
+      m.WatchInterface._severity_display("未评估（手机端）"))
 wi._set_filter("小程序")
 QTest.qWait(150)
 check("点「小程序」后只显示该来源", wi.box.count() == 5, wi.box.count())
