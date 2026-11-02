@@ -6670,31 +6670,95 @@ class HomeInterface(QWidget):
 
 
 # ── 拖拽区域 ──────────────────────────────────────────────────
-class DropArea(SimpleCardWidget):
-    """支持拖入图片的区域"""
+class DropArea(QWidget):
+    """画布：支持拖入图片，图片等比居中，右上角提示「拖拽图片可替换」。"""
+
     dropped = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("dropArea")
         self.setAcceptDrops(True)
-        self.setMinimumHeight(320)
+        self.setMinimumHeight(260)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setStyleSheet("#dropArea { background:#EDEFE7; border-radius:6px; }")
+        self._pix = None
+        self._hover = False
+
         lay = QVBoxLayout(self)
-        lay.setSpacing(10)
-        lay.addStretch()
+        lay.setContentsMargins(8, 8, 8, 8)
+        lay.setSpacing(0)
         self.art = None
-        art = brand_pixmap("主楼剪影_淡金_透明.png", height=120)
+        art = brand_pixmap("主楼剪影_淡金_透明.png", height=110)
         if art is not None:
             self.art = ImageLabel(self)
             self.art.setPixmap(art)
             self.art.setAlignment(Qt.AlignCenter)
-            lay.addWidget(self.art)
-        self.image = ImageLabel(self)
+            lay.addWidget(self.art, 0, Qt.AlignCenter)
+        self.image = QLabel(self)
         self.image.setAlignment(Qt.AlignCenter)
-        self.image.setText("把图片拖到这里\n或点击下方按钮选择")
+        self.image.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        self.image.setMinimumWidth(1)
+        self.image.setMinimumHeight(1)
         self.image.setWordWrap(True)
-        lay.addWidget(self.image)
-        lay.addStretch()
-        self._hover = False
+        self.image.setText("把图片拖到这里\n或点击下方「选择图片」")
+        self.image.setStyleSheet("color:%s; background:transparent;" % NAU["muted"])
+        lay.addWidget(self.image, 1)
+
+        self.hint = QFrame(self)
+        self.hint.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.hint.setStyleSheet(
+            "QFrame { background:#FFFFFF; border:1px solid #DADFD7; border-radius:999px; }")
+        hl = QHBoxLayout(self.hint)
+        hl.setContentsMargins(10, 3, 10, 3)
+        hl.setSpacing(5)
+        ic = QLabel(self.hint)
+        ic.setFixedSize(12, 12)
+        ic.setPixmap(FIF.PHOTO.icon().pixmap(12, 12))
+        hl.addWidget(ic)
+        hl.addWidget(t_caption("拖拽图片可替换", self.hint, color=NAU["subtext"]))
+        self.hint.setVisible(False)
+
+    def set_image(self, pixmap):
+        if pixmap is None or pixmap.isNull():
+            return
+        if pixmap.width() > 1600 or pixmap.height() > 1600:
+            pixmap = pixmap.scaled(1600, 1600, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self._pix = pixmap
+        if self.art is not None:
+            self.art.setVisible(False)
+        self.image.setText("")
+        self.hint.setVisible(True)
+        self._fit()
+        self._place_hint()
+
+    def clear_image(self):
+        self._pix = None
+        if self.art is not None:
+            self.art.setVisible(True)
+        self.image.clear()
+        self.image.setText("把图片拖到这里\n或点击下方「选择图片」")
+        self.hint.setVisible(False)
+
+    def _fit(self):
+        if self._pix is None or self._pix.isNull():
+            return
+        self.image.setPixmap(self._pix.scaled(
+            max(1, self.width() - 16), max(1, self.height() - 16),
+            Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+    def _place_hint(self):
+        if not self.hint.isVisible():
+            return
+        self.hint.adjustSize()
+        self.hint.move(max(8, self.width() - self.hint.width() - 12), 12)
+        self.hint.raise_()
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._fit()
+        self._place_hint()
 
     def dragEnterEvent(self, e):
         if e.mimeData().hasUrls():
@@ -6723,48 +6787,426 @@ class ImageInterface(QWidget):
         self.main = main
         self.setObjectName("imageInterface")
         self.current_image = None
+        self.current_path = ""
         self._busy = False
+        self._recognized = False
+        self._last_count = 0
+        self._last_error = ""
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(32, 24, 32, 24)
-        root.setSpacing(12)
-        root.addWidget(page_title("图片识别", self))
-        root.addWidget(CaptionLabel("支持拖拽图片，或从电脑中选择；支持 jpg / png / bmp", self))
-        root.addSpacing(8)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.scroll = ScrollArea(self)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        content = QWidget(self.scroll)
+        content.setObjectName("imageContent")
+        root = QVBoxLayout(content)
+        root.setContentsMargins(28, 14, 28, 6)
+        root.setSpacing(8)
+        self.root = root
 
-        self.drop = DropArea(self)
-        self.drop.dropped.connect(self.load_image)
-        root.addWidget(self.drop, 1)
+        root.addLayout(self._build_head())
 
-        self.bar = IndeterminateProgressBar(self, start=False)
-        self.bar.setVisible(False)
-        root.addWidget(self.bar)
+        body = QHBoxLayout()
+        body.setSpacing(16)
+        body.addWidget(self._build_canvas(), 1)
+        body.addWidget(self._build_right_column(), 0)
+        root.addLayout(body, 1)
 
-        self.status = CaptionLabel("", self)
-        root.addWidget(self.status)
+        foot = QHBoxLayout()
+        foot.setContentsMargins(2, 2, 2, 0)
+        foot.addWidget(t_caption("稻视界 · 南京农业大学 · 诚朴勤仁", self,
+                                 color=NAU["muted"]))
+        foot.addStretch()
+        foot.addWidget(t_caption("本地推理 · 图片不出电脑 · 识别结果自动保存",
+                                 self, color=NAU["muted"]))
+        root.addLayout(foot)
 
-        row = QHBoxLayout()
-        row.setSpacing(12)
-        self.btn_pick = PrimaryPushButton(FIF.FOLDER, "选择图片", self)
-        self.btn_pick.setMinimumHeight(42)
-        self.btn_run = PushButton(FIF.PLAY, "开始识别", self)
-        self.btn_run.setMinimumHeight(42)
-        self.btn_run.setEnabled(False)
-        self.btn_miss = PushButton(getattr(FIF, "FEEDBACK", FIF.EDIT), "报告漏检", self)
-        self.btn_miss.setMinimumHeight(42)
+        self.scroll.setWidget(content)
+        outer.addWidget(self.scroll)
+
+        self._refresh_steps()
+        self._refresh_recent()
+
+    def _build_head(self):
+        head = QHBoxLayout()
+        head.setSpacing(16)
+        left = QVBoxLayout()
+        left.setSpacing(2)
+        left.addWidget(page_title("图片识别", self))
+        sub = t_caption("拖拽图片到画布，或从电脑选择 · 支持 jpg / png / bmp · "
+                        "图片只在本机推理", self, color=NAU["muted"])
+        sub.setWordWrap(True)
+        sub.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        sub.setMinimumWidth(1)
+        left.addWidget(sub)
+        head.addLayout(left, 1)
+
+        acts = QHBoxLayout()
+        acts.setSpacing(8)
+        acts.setContentsMargins(0, 8, 0, 0)
+        self.btn_miss = PushButton(FIF.FEEDBACK, "报告漏检", self)
+        self.btn_miss.setFixedHeight(34)
         self.btn_miss.setEnabled(False)
         self.btn_miss.setToolTip("田里确实有病、模型没检出：记下来进待标注队列（漏检是最危险的错误）")
-        row.addStretch()
-        row.addWidget(self.btn_pick)
-        row.addWidget(self.btn_run)
-        row.addWidget(self.btn_miss)
-        row.addStretch()
-        root.addLayout(row)
-
-        self.btn_pick.clicked.connect(self.pick)
-        self.btn_run.clicked.connect(self.run_inference)
         self.btn_miss.clicked.connect(self._report_miss)
+        acts.addWidget(self.btn_miss)
+        more = RoundMenu(parent=self)
+        self.act_clear = Action(FIF.DELETE, "清除图片", self)
+        self.act_clear.setEnabled(False)
+        self.act_clear.triggered.connect(lambda _=False: self.clear_image())
+        more.addAction(self.act_clear)
+        self.act_reports = Action(FIF.DOCUMENT, "打开报告记录", self)
+        self.act_reports.triggered.connect(
+            lambda _=False: self.main.go(self.main.reportInterface))
+        more.addAction(self.act_reports)
+        self.btn_more = DropDownPushButton("更多", self)
+        self.btn_more.setFixedHeight(34)
+        self.btn_more.setMenu(more)
+        acts.addWidget(self.btn_more)
+        head.addLayout(acts, 0)
+        return head
 
+    def _build_canvas(self):
+        card = SimpleCardWidget(self)
+        self.canvas_card = card
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(16, 12, 16, 10)
+        lay.setSpacing(8)
+
+        head = QHBoxLayout()
+        head.setSpacing(10)
+        title = StrongBodyLabel("待识别图片", card)
+        title.setFont(ui_font(TYPE["subtitle"] - 2, weight=QFont.DemiBold))
+        head.addWidget(title)
+        self.file_name = t_body("尚未选择图片", card, color=NAU["subtext"])
+        self.file_name.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.file_name.setMinimumWidth(1)
+        head.addWidget(self.file_name, 1)
+        self.file_meta = t_caption("支持 jpg / png / bmp", card, color=NAU["muted"])
+        head.addWidget(self.file_meta)
+        lay.addLayout(head)
+
+        self.drop = DropArea(card)
+        self.drop.dropped.connect(self.load_image)
+        lay.addWidget(self.drop, 1)
+
+        self.bar = IndeterminateProgressBar(card, start=False)
+        self.bar.setVisible(False)
+        lay.addWidget(self.bar)
+
+        foot = QHBoxLayout()
+        foot.setSpacing(8)
+        self.btn_pick = PushButton(FIF.FOLDER, "选择图片", card)
+        self.btn_pick.setFixedHeight(40)
+        self.btn_pick.clicked.connect(self.pick)
+        foot.addWidget(self.btn_pick)
+        self.btn_run = PrimaryPushButton(FIF.PLAY, "开始识别", card)
+        self.btn_run.setFixedHeight(40)
+        self.btn_run.setEnabled(False)
+        self.btn_run.clicked.connect(self.run_inference)
+        foot.addWidget(self.btn_run)
+        self.btn_clear = TransparentPushButton("清除图片", card)
+        self.btn_clear.setFixedHeight(30)
+        self.btn_clear.setVisible(False)
+        self.btn_clear.clicked.connect(self.clear_image)
+        foot.addWidget(self.btn_clear)
+        self.status = t_caption("拖拽图片或点击「选择图片」", card, color=NAU["muted"])
+        self.status.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        self.status.setWordWrap(True)
+        self.status.setMinimumWidth(1)
+        self.status.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        foot.addWidget(self.status, 1)
+        lay.addLayout(foot)
+        return card
+
+    def _build_right_column(self):
+        col = QWidget(self)
+        col.setFixedWidth(372)
+        v = QVBoxLayout(col)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(12)
+        v.addWidget(self._build_steps_card())
+        v.addWidget(self._build_recent_card(), 1)
+        v.addWidget(self._build_tips_card())
+        self.right_col = col
+        return col
+
+    def _build_steps_card(self):
+        card = SimpleCardWidget(self)
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(14, 10, 14, 10)
+        lay.setSpacing(8)
+        head = QHBoxLayout()
+        title = StrongBodyLabel("识别流程", card)
+        title.setFont(ui_font(TYPE["body"] + 2, weight=QFont.DemiBold))
+        head.addWidget(title)
+        head.addStretch()
+        dev = "GPU" if getattr(self.main, "device", "cpu") != "cpu" else "CPU"
+        head.addWidget(t_caption("本地 YOLOv8n · %s" % dev, card, color=NAU["muted"]))
+        lay.addLayout(head)
+
+        steps = QVBoxLayout()
+        steps.setSpacing(0)
+        self.step_rows = []
+        self.step_lines = []
+        names = ("选择图片", "开始识别", "查看结果与治理")
+        for i, name in enumerate(names):
+            row = QWidget(card)
+            row.setFixedHeight(46)
+            h = QHBoxLayout(row)
+            h.setContentsMargins(0, 0, 0, 0)
+            h.setSpacing(10)
+            num = QLabel(str(i + 1), row)
+            num.setFixedSize(24, 24)
+            num.setAlignment(Qt.AlignCenter)
+            h.addWidget(num, 0, Qt.AlignTop)
+            col = QVBoxLayout()
+            col.setSpacing(0)
+            t = QLabel(name, row)
+            t.setFont(ui_font(TYPE["body"] + 1, weight=QFont.DemiBold))
+            t.setStyleSheet("color:%s; background:transparent;" % NAU["dark"])
+            col.addWidget(t)
+            sub = QLabel("", row)
+            sub.setFont(ui_font(TYPE["caption"], weight=QFont.Medium))
+            sub.setStyleSheet("color:%s; background:transparent;" % NAU["muted"])
+            sub.setWordWrap(True)
+            sub.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            sub.setMinimumWidth(1)
+            col.addWidget(sub)
+            h.addLayout(col, 1)
+            steps.addWidget(row)
+            self.step_rows.append({"num": num, "title": t, "sub": sub})
+            if i < len(names) - 1:
+                line_row = QHBoxLayout()
+                line_row.setContentsMargins(11, 2, 0, 2)
+                line = QFrame(card)
+                line.setFixedSize(2, 14)
+                line_row.addWidget(line)
+                line_row.addStretch()
+                steps.addLayout(line_row)
+                self.step_lines.append(line)
+        lay.addLayout(steps)
+        return card
+
+    def _build_recent_card(self):
+        card = SimpleCardWidget(self)
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(14, 12, 14, 10)
+        lay.setSpacing(6)
+        head = QHBoxLayout()
+        title = StrongBodyLabel("最近识别", card)
+        title.setFont(ui_font(TYPE["body"] + 2, weight=QFont.DemiBold))
+        head.addWidget(title)
+        head.addStretch()
+        link = QLabel('<a href="#" style="color:%s; text-decoration:none;">查看全部 →</a>'
+                      % NAU["primary"], card)
+        link.setTextFormat(Qt.RichText)
+        link.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        link.setOpenExternalLinks(False)
+        link.linkActivated.connect(lambda _=False: self.main.go(self.main.reportInterface))
+        head.addWidget(link)
+        lay.addLayout(head)
+
+        self.recent_box = QVBoxLayout()
+        self.recent_box.setSpacing(0)
+        lay.addLayout(self.recent_box, 1)
+
+        foot = QHBoxLayout()
+        self.recent_count = t_caption("", card, color=NAU["muted"])
+        foot.addWidget(self.recent_count)
+        foot.addStretch()
+        link2 = QLabel('<a href="#" style="color:%s; text-decoration:none;">打开报告记录 →</a>'
+                       % NAU["primary"], card)
+        link2.setTextFormat(Qt.RichText)
+        link2.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        link2.setOpenExternalLinks(False)
+        link2.linkActivated.connect(lambda _=False: self.main.go(self.main.reportInterface))
+        foot.addWidget(link2)
+        lay.addLayout(foot)
+        return card
+
+    def _build_tips_card(self):
+        card = SimpleCardWidget(self)
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(14, 10, 14, 10)
+        lay.setSpacing(0)
+        title = StrongBodyLabel("拍摄建议", card)
+        title.setFont(ui_font(TYPE["body"] + 2, weight=QFont.DemiBold))
+        lay.addWidget(title)
+        for icon, text in ((FIF.ACCEPT, "叶片占画面主体，病斑 / 虫体清晰对焦"),
+                           (FIF.BRIGHTNESS, "光线均匀，避免强反光与阴影"),
+                           (FIF.PHOTO, "单叶或单株拍摄，避免多类混拍")):
+            lay.addWidget(self._tip_row(card, icon, text))
+        return card
+
+    def _tip_row(self, parent, icon, text):
+        row = QWidget(parent)
+        h = QHBoxLayout(row)
+        h.setContentsMargins(0, 5, 0, 0)
+        h.setSpacing(8)
+        ic = QLabel(row)
+        ic.setFixedSize(14, 14)
+        ic.setPixmap(icon.icon(color=QColor(NAU["primary"])).pixmap(14, 14))
+        h.addWidget(ic, 0, Qt.AlignTop)
+        lbl = t_caption(text, row, color=NAU["subtext"])
+        lbl.setWordWrap(True)
+        lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        lbl.setMinimumWidth(1)
+        h.addWidget(lbl, 1)
+        return row
+
+    # ── 状态与数据 ──
+    def _refresh_steps(self):
+        if not hasattr(self, "step_rows"):
+            return
+        loaded = self.current_image is not None
+        busy = self._busy
+        done = self._recognized
+        if done:
+            states = ("done", "done", "current")
+        elif loaded or busy:
+            states = ("done", "current", "pending")
+        else:
+            states = ("current", "pending", "pending")
+        sub1 = ("已载入 1 张 · %d × %d"
+                % (self.current_image.shape[1], self.current_image.shape[0])
+                if loaded else "拖拽图片或点击「选择图片」")
+        if busy:
+            sub2 = "正在识别…"
+        elif done:
+            sub2 = "识别完成，共 %d 个检测框" % self._last_count
+        elif self._last_error:
+            sub2 = "识别失败，请重试"
+        elif loaded:
+            sub2 = "点击「开始识别」或按 Ctrl+R"
+        else:
+            sub2 = "载入图片后开始"
+        sub3 = "去结果页查看" if done else "识别完成后自动跳转"
+        for i, state in enumerate(states):
+            row = self.step_rows[i]
+            row["sub"].setText((sub1, sub2, sub3)[i])
+            if state == "done":
+                row["num"].setText("✓")
+                row["num"].setStyleSheet(
+                    "background:%s; color:%s; border:none; border-radius:12px;"
+                    " font-size:11px; font-weight:700;"
+                    % (NAU["primary_light"], NAU["primary"]))
+                row["title"].setStyleSheet("color:%s; background:transparent;"
+                                           % NAU["dark"])
+            elif state == "current":
+                row["num"].setText(str(i + 1))
+                row["num"].setStyleSheet(
+                    "background:#FFFFFF; color:%s; border:2px solid %s;"
+                    " border-radius:12px; font-size:11px; font-weight:700;"
+                    % (NAU["primary"], NAU["primary"]))
+                row["title"].setStyleSheet("color:%s; background:transparent;"
+                                           % NAU["dark"])
+            else:
+                row["num"].setText(str(i + 1))
+                row["num"].setStyleSheet(
+                    "background:#F1F2EE; color:%s; border:none; border-radius:12px;"
+                    " font-size:11px; font-weight:700;" % NAU["muted"])
+                row["title"].setStyleSheet("color:%s; background:transparent;"
+                                           % NAU["subtext"])
+        for i, line in enumerate(self.step_lines):
+            color = NAU["primary_light"] if states[i] == "done" else NAU["divider"]
+            line.setStyleSheet("background:%s; border:none;" % color)
+
+    @staticmethod
+    def _when_text(stamp):
+        s = str(stamp or "").strip()
+        try:
+            dt = datetime.strptime(s[:16], "%Y-%m-%d %H:%M")
+        except ValueError:
+            return s or "—"
+        days = (datetime.now().date() - dt.date()).days
+        if days == 0:
+            return "今天 " + dt.strftime("%H:%M")
+        if days == 1:
+            return "昨天 " + dt.strftime("%H:%M")
+        return dt.strftime("%m-%d %H:%M")
+
+    @staticmethod
+    def _clear_box(layout):
+        while layout.count():
+            item = layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
+            elif item.layout() is not None:
+                ImageInterface._clear_box(item.layout())
+
+    def _recent_row(self, it, parent):
+        row = QWidget(parent)
+        row.setFixedHeight(46)
+        h = QHBoxLayout(row)
+        h.setContentsMargins(0, 4, 0, 4)
+        h.setSpacing(10)
+        pic = QLabel(row)
+        pic.setFixedSize(38, 38)
+        pic.setStyleSheet("background:#E7EAE3; border-radius:5px;")
+        sid = str(it.get("id") or "")
+        path = SESSION_DIR / ("%s.jpg" % sid)
+        if path.exists():
+            pix = watch_thumb_pixmap(path, size=(76, 76))
+            if pix is not None and not pix.isNull():
+                side = min(pix.width(), pix.height())
+                x = (pix.width() - side) // 2
+                y = (pix.height() - side) // 2
+                pic.setPixmap(pix.copy(x, y, side, side).scaled(
+                    38, 38, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        h.addWidget(pic)
+
+        body = QVBoxLayout()
+        body.setSpacing(0)
+        name = QLabel(str(it.get("cls") or "未识别"), row)
+        name.setFont(ui_font(TYPE["body"] + 1, weight=QFont.DemiBold))
+        name.setStyleSheet("color:%s; background:transparent;" % NAU["dark"])
+        body.addWidget(name)
+        mode = {"image": "图片上传", "camera": "摄像头",
+                "phone": "手机同步"}.get(str(it.get("mode") or ""), "识别")
+        when = QLabel("%s · %s" % (self._when_text(it.get("time")), mode), row)
+        when.setFont(ui_font(TYPE["caption"], weight=QFont.Medium))
+        when.setStyleSheet("color:%s; background:transparent;" % NAU["muted"])
+        body.addWidget(when)
+        h.addLayout(body, 1)
+
+        try:
+            conf = float(it.get("conf") or 0)
+        except (TypeError, ValueError):
+            conf = 0.0
+        cl = QLabel("%.0f%%" % (conf * 100) if conf > 0 else "—", row)
+        cl.setFont(ui_font(TYPE["body"], weight=QFont.DemiBold))
+        cl.setStyleSheet("color:%s; background:transparent;" % NAU["primary"])
+        h.addWidget(cl, 0, Qt.AlignRight | Qt.AlignVCenter)
+        return row
+
+    def _refresh_recent(self):
+        if not hasattr(self, "recent_box"):
+            return
+        self._clear_box(self.recent_box)
+        items = load_session_index()
+        n = 5 if self.height() >= 950 else 4
+        self._recent_n = n
+        shown = items[:n]
+        for i, it in enumerate(shown):
+            self.recent_box.addWidget(self._recent_row(it, self))
+            if i < len(shown) - 1:
+                line = QFrame(self)
+                line.setFixedHeight(1)
+                line.setStyleSheet("background:%s; border:none;" % NAU["divider"])
+                self.recent_box.addWidget(line)
+        if not items:
+            tip = t_caption("还没有识别记录；完成一次识别后会出现在这里。",
+                            self, color=NAU["muted"])
+            tip.setWordWrap(True)
+            self.recent_box.addWidget(tip)
+        self.recent_box.addStretch(1)
+        self.recent_count.setText("共 %d 条识别记录" % len(items))
+
+    # ── 图片操作 ──
     def pick(self):
         if self._busy:
             return
@@ -6784,22 +7226,57 @@ class ImageInterface(QWidget):
                           position=InfoBarPosition.TOP, parent=self)
             return
         self.current_image = img
-        if self.drop.art is not None:
-            self.drop.art.setVisible(False)      # 有图了就收起剪影
-        self.drop.image.setPixmap(bgr_to_qpixmap(img, self.drop.size() - QSize(40, 40)))
+        self.current_path = str(file_path)
+        self._recognized = False
+        self._last_count = 0
+        self._last_error = ""
+        self.drop.set_image(bgr_to_qpixmap(img))
+        self.file_name.setText(os.path.basename(file_path))
+        self.file_name.setToolTip(file_path)
+        ext = os.path.splitext(file_path)[1].lstrip(".").upper()
+        self.file_meta.setText("%d × %d · %s" % (img.shape[1], img.shape[0], ext))
+        self.status.setText("已载入 · 按 Ctrl+R 开始识别")
         self.btn_run.setEnabled(True)
         self.btn_miss.setEnabled(True)
-        self.status.setText(f"已载入：{os.path.basename(file_path)}　{img.shape[1]}×{img.shape[0]}")
+        self.btn_clear.setVisible(True)
+        self.act_clear.setEnabled(True)
+        self._refresh_steps()
+
+    def clear_image(self):
+        if self._busy:
+            return
+        global LAST_IMAGE_SOURCE
+        LAST_IMAGE_SOURCE = ""
+        self.current_image = None
+        self.current_path = ""
+        self._recognized = False
+        self._last_count = 0
+        self._last_error = ""
+        self.drop.clear_image()
+        self.file_name.setText("尚未选择图片")
+        self.file_name.setToolTip("")
+        self.file_meta.setText("支持 jpg / png / bmp")
+        self.status.setText("拖拽图片或点击「选择图片」")
+        self.btn_run.setEnabled(False)
+        self.btn_miss.setEnabled(False)
+        self.btn_clear.setVisible(False)
+        self.act_clear.setEnabled(False)
+        self._refresh_steps()
 
     def run_inference(self):
         if self._busy or self.current_image is None:
             return
         self._busy = True
+        self._last_error = ""
         self.btn_pick.setEnabled(False)
         self.btn_run.setEnabled(False)
+        self.btn_miss.setEnabled(False)
+        self.btn_clear.setEnabled(False)
+        self.act_clear.setEnabled(False)
         self.bar.setVisible(True)
         self.bar.start()
         self.status.setText("正在识别…")
+        self._refresh_steps()
         self.thread = _track_thread(InferenceThread(self.main.model, self.current_image))
         self.thread.result_ready.connect(self._done)
         self.thread.failed.connect(self._failed)
@@ -6810,12 +7287,20 @@ class ImageInterface(QWidget):
         self.bar.stop()
         self.bar.setVisible(False)
         self.btn_pick.setEnabled(True)
-        self.btn_run.setEnabled(self.current_image is not None)
-        self.btn_miss.setEnabled(self.current_image is not None)
+        has_img = self.current_image is not None
+        self.btn_run.setEnabled(has_img)
+        self.btn_miss.setEnabled(has_img)
+        self.btn_clear.setEnabled(has_img)
+        self.act_clear.setEnabled(has_img)
+        self._refresh_steps()
 
     def _failed(self, msg):
+        self._recognized = False
+        self._last_count = 0
+        self._last_error = str(msg or "")
         self._reset()
-        self.status.setText("识别失败：" + msg)
+        self.status.setText("识别失败：" + str(msg or "未知错误"))
+        self._refresh_steps()
         InfoBar.error("识别失败", msg, duration=5000, position=InfoBarPosition.TOP, parent=self)
 
     def _report_miss(self):
@@ -6842,12 +7327,39 @@ class ImageInterface(QWidget):
     def _done(self, result_list):
         self._reset()
         if not result_list:
+            self._recognized = False
             self.status.setText("未检测到符合阈值的病虫害，可换一张更清晰的图片")
+            self._refresh_steps()
             InfoBar.warning("未检测到目标", "没有超过置信度阈值的检测框", duration=3000,
                             position=InfoBarPosition.TOP, parent=self)
             return
+        self._recognized = True
+        self._last_count = len(result_list)
         self.status.setText(f"识别完成，共 {len(result_list)} 个检测框")
+        self._refresh_steps()
         self.main.show_result(result_list, self.current_image, "image")
+        self._refresh_recent()
+
+    # ── 大屏适配 ──
+    def _apply_content_width(self):
+        if not hasattr(self, "root"):
+            return
+        vw = self.scroll.viewport().width() if hasattr(self, "scroll") else self.width()
+        side = max(28, (vw - CONTENT_MAX_WIDTH) // 2)
+        self.root.setContentsMargins(side, 14, side, 6)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply_content_width()
+        n = 5 if self.height() >= 950 else 4
+        if getattr(self, "_recent_n", None) != n:
+            self._refresh_recent()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._apply_content_width()
+        self._refresh_recent()
+        self._refresh_steps()
 
 
 # ── 摄像头页 ──────────────────────────────────────────────────
@@ -7951,6 +8463,7 @@ class ResultInterface(QWidget):
         self._fill_treatment()
         self._start_cascade()      # 复核与 AI 分析并行：低置信度/病害类才触发
         self._start_ai()
+        self._save_session()       # 识别完先落一次盘：最近识别与会话记忆立刻可见（AI 到达后再更新）
 
     def _clear_layout(self, layout):
         while layout.count():

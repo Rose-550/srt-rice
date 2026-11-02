@@ -199,6 +199,39 @@ check("讲评卡为三段（结论 / 症状 / 防治）",
       and not ti.feedback_card.isHidden())
 ti.grab().save(str(OUT / "train_1380.png"))
 
+# ── 图片识别（画布 + 信息栏）──
+win.switchTo(win.imageInterface)
+QTest.qWait(300)
+ii = win.imageInterface
+check("图片页空态：开始识别与漏检禁用",
+      not ii.btn_run.isEnabled() and not ii.btn_miss.isEnabled()
+      and not ii.btn_clear.isVisible(),
+      (ii.btn_run.isEnabled(), ii.btn_miss.isEnabled(), ii.btn_clear.isVisible()))
+sample = ROOT / "data" / "raw" / "JPEGImages" / "rice_leaf_roller_439.jpg"
+ii.load_image(str(sample))
+QTest.qWait(300)
+check("载入图片后主操作切换",
+      ii.btn_run.isEnabled() and ii.btn_miss.isEnabled() and ii.btn_clear.isVisible()
+      and ii.file_meta.text().startswith("4608"),
+      (ii.btn_run.isEnabled(), ii.btn_clear.isVisible(), ii.file_meta.text()))
+check("识别流程步骤 1 完成 / 2 进行中",
+      ii.step_rows[0]["sub"].text().startswith("已载入")
+      and "点击「开始识别」" in ii.step_rows[1]["sub"].text(),
+      [r["sub"].text() for r in ii.step_rows])
+check("图片页最近识别有记录",
+      "条识别记录" in ii.recent_count.text() and ii.recent_box.count() >= 1,
+      (ii.recent_count.text(), ii.recent_box.count()))
+check("1380 图片页画布 + 右栏 372",
+      ii.right_col.width() == 372 and ii.canvas_card.width() > ii.right_col.width(),
+      (ii.canvas_card.width(), ii.right_col.width()))
+ii.grab().save(str(OUT / "image_1380.png"))
+
+win.resize(1120, 720)
+QTest.qWait(300)
+check("1120 图片页无横向溢出",
+      ii.scroll.widget().minimumSizeHint().width() <= ii.scroll.viewport().width(),
+      (ii.scroll.widget().minimumSizeHint().width(), ii.scroll.viewport().width()))
+
 # ── 1920 全屏（决赛演示基线）──
 win.resize(1920, 1080)
 QTest.qWait(400)
@@ -245,6 +278,16 @@ check("1920 教学页无横向溢出",
       ti.scroll.widget().minimumSizeHint().width() <= ti.scroll.viewport().width(),
       (ti.scroll.widget().minimumSizeHint().width(), ti.scroll.viewport().width()))
 ti.grab().save(str(OUT / "train_1920.png"))
+
+win.switchTo(win.imageInterface)
+QTest.qWait(300)
+check("1920 图片页右栏 372 + 内容限宽",
+      ii.right_col.width() == 372 and ii.root.contentsMargins().left() >= 200,
+      (ii.right_col.width(), ii.root.contentsMargins().left()))
+check("1920 图片页无横向溢出",
+      ii.scroll.widget().minimumSizeHint().width() <= ii.scroll.viewport().width(),
+      (ii.scroll.widget().minimumSizeHint().width(), ii.scroll.viewport().width()))
+ii.grab().save(str(OUT / "image_1920.png"))
 
 win.close()
 print("\n通过 %d 项，失败 %d 项" % (len(PASS), len(FAIL)))
