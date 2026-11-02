@@ -10059,7 +10059,25 @@ class WatchInterface(QWidget):
     """自动巡检页：把「人拍照→人点按钮」变成「新照片自己进来→agent 自己处理」。"""
 
     POLL_SECONDS = 5
-    RECENT_ROWS = 30          # 列表最多显示多少条历史记录
+    RECENT_ROWS = 8           # 台账表格显示最近多少条（完整记录仍在 watch/results.csv）
+
+    # 台账列宽：文件列自适应，表头与行共用同一套数字
+    COL_THUMB = 40
+    COL_TIME = 100
+    COL_SOURCE = 78
+    COL_RESULT = 110
+    COL_CONF = 56
+    COL_SEV = 64
+    COL_VERIFY = 68
+    COL_ACTIONS = 112
+    ROW_H = 42
+
+    CHIP_COLORS = {
+        "green": (NAU["primary_light"], NAU["primary"]),
+        "amber": ("#FCF3E6", "#B77422"),
+        "red": ("#FBEAE7", NAU["red"]),
+        "grey": ("#F1F2EE", NAU["muted"]),
+    }
 
     def __init__(self, main):
         super().__init__()
@@ -10074,136 +10092,414 @@ class WatchInterface(QWidget):
         self.count = 0
         self.disagree = 0
         self._thumb_cache = {}       # 文件名 → 缩略图（避免每次刷新重新解码）
+        self._filter = "全部"
+        self._filter_btns = {}
+        self._has_rows = False
+        self._monitor_state = "idle"
+        self._last_total = 0
+        self._last_time = ""
+        self._sched_expanded = False
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(32, 24, 32, 24)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.scroll = ScrollArea(self)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        content = QWidget(self.scroll)
+        content.setObjectName("watchContent")
+        root = QVBoxLayout(content)
+        root.setContentsMargins(28, 14, 28, 8)
         root.setSpacing(10)
-        head = QHBoxLayout()
-        head.addWidget(page_title("自动巡检", self))
-        head.addStretch()
-        self.btn_relay = PushButton(FIF.SYNC, "云端同步", self)
-        self.btn_relay.setToolTip("小程序/手机不在同一网络时用它：从公网中转服务拉取图片与识别结果")
-        self.btn_relay.clicked.connect(self._open_relay_sync)
-        head.addWidget(self.btn_relay)
-        self.btn_phone = PrimaryPushButton(FIF.CLOUD, "手机传图", self)
-        self.btn_phone.setToolTip("手机连同一 WiFi，浏览器打开一个地址就能上传原图——"
-                                  "不转码，EXIF 里的 GPS 完整保留")
-        self.btn_phone.clicked.connect(self._open_phone_upload)
-        head.addWidget(self.btn_phone)
-        self.btn_ledger = PushButton(FIF.SAVE, "打开台账", self)
-        self.btn_ledger.clicked.connect(self._open_ledger)
-        head.addWidget(self.btn_ledger)
-        self.btn_reload = PushButton(getattr(FIF, "UPDATE", FIF.SYNC), "刷新列表", self)
-        self.btn_reload.setToolTip("重新读一遍台账，把最近的处理结果显示出来")
-        self.btn_reload.clicked.connect(self._load_recent_rows)
-        head.addWidget(self.btn_reload)
-        self.btn_goto_map = PushButton(getattr(FIF, "GLOBE", FIF.FOLDER), "地块地图", self)
-        self.btn_goto_map.setToolTip("跳到地块地图，看这些点位落在哪")
-        self.btn_goto_map.clicked.connect(
-            lambda: self.main.go(self.main.mapInterface))
-        head.addWidget(self.btn_goto_map)
-        root.addLayout(head)
-        root.addWidget(CaptionLabel(
-            "把手机/相机拍的图丢进收件箱，程序自动检测、（低置信度或病害类时）请第二个模型复核、"
-            "并把结论落库；出现分歧或重度检出会主动提醒。", self))
 
-        # 来源图例：三种来源用颜色区分，省得猜
-        legend = QHBoxLayout()
-        legend.setSpacing(16)
-        legend.addWidget(t_caption("来源：", self, color=NAU["subtext"]))
-        for _name in ("小程序", "手机直传", "电脑本地"):
-            _m = SOURCE_META[_name]
-            legend.addWidget(t_caption("%s %s" % (_m["dot"], _name), self, color=_m["color"]))
-        legend.addStretch()
-        root.addLayout(legend)
+        root.addLayout(self._build_head())
+        root.addWidget(self._build_monitor_card())
+        root.addWidget(self._build_ledger_card())
+        root.addWidget(self._build_schedule_card())
+        root.addLayout(self._build_footer())
 
-        bar = QHBoxLayout()
-        self.path_label = LineEdit(self)
-        self.path_label.setReadOnly(True)
-        self.path_label.setText(str(self.folder))
-        bar.addWidget(self.path_label, 1)
-        btn_dir = PushButton(FIF.FOLDER, "选择目录", self)
-        btn_dir.clicked.connect(self.choose_folder)
-        bar.addWidget(btn_dir)
-        self.btn_toggle = PrimaryPushButton(FIF.ROBOT, "开始监控", self)
-        self.btn_toggle.setMinimumHeight(40)
-        self.btn_toggle.clicked.connect(self.toggle)
-        bar.addWidget(self.btn_toggle)
-        self.btn_once = PushButton(FIF.PLAY, "处理现有图片", self)
-        self.btn_once.setMinimumHeight(40)
-        self.btn_once.clicked.connect(self.run_once)
-        bar.addWidget(self.btn_once)
-        root.addLayout(bar)
+        self.scroll.setWidget(content)
+        outer.addWidget(self.scroll)
 
-        self.status = CaptionLabel("未开始", self)
-        root.addWidget(self.status)
-        scroll, self.box = _scroll_body(self)
-        root.addWidget(scroll, 1)
-        # 先把台账里已有的记录显示出来：列表原来是纯内存的，程序一重启就空白，
-        # 但手机上早就看到结果了，看着像电脑没干活
         self._load_recent_rows()
-
-        # ── 定时任务：到点自己干（跨会话的自主目标）──
-        self.sched_card = HeaderCardWidget("定时任务（程序开着就到点自动执行）", self)
-        self.sched_result = CaptionLabel("", self)
-        self.sched_result.setWordWrap(True)
-        self.sched_card.viewLayout.addWidget(self.sched_result)
-        root.addWidget(self.sched_card)
         self._reload_schedules()
 
-    def _show_empty(self):
-        tip = t_body("收件箱为空。把病叶照片复制到上面这个目录，程序会自动处理。", self, muted=True)
-        tip.setAlignment(Qt.AlignCenter)
-        self.box.addWidget(tip)
-        self.box.addStretch()
+    # ── 页面骨架 ──
+    def _build_head(self):
+        head = QHBoxLayout()
+        head.setSpacing(16)
+        left = QVBoxLayout()
+        left.setSpacing(2)
+        left.addWidget(page_title("自动巡检", self))
+        left.addWidget(t_caption("手机 / 相机照片落入收件箱后自动检测 · "
+                                 "低置信度自动复核 · 异常才提醒", self,
+                                 color=NAU["muted"]))
+        head.addLayout(left, 1)
 
-    def choose_folder(self):
-        d = QFileDialog.getExistingDirectory(self, "选择要巡检的目录", str(self.folder))
-        if d:
-            self.folder = Path(d)
-            self.path_label.setText(d)
+        acts = QHBoxLayout()
+        acts.setSpacing(8)
+        acts.setContentsMargins(0, 8, 0, 0)
+        self.btn_ledger = PushButton(FIF.DOCUMENT, "打开台账", self)
+        self.btn_ledger.setFixedHeight(34)
+        self.btn_ledger.clicked.connect(self._open_ledger)
+        acts.addWidget(self.btn_ledger)
 
-    def toggle(self):
-        if self.thread is not None and self.thread.isRunning():
-            self.thread.stop()
-            self.thread.wait(3000)
-            self.btn_toggle.setText("开始监控")
-            self.status.setText("已停止 · 本次共处理 %d 张" % self.count)
+        # 页头只留高频操作；手机传图 / 云端同步 / 地块地图收进「更多」
+        menu = RoundMenu(parent=self)
+        self.btn_phone = Action(FIF.CLOUD, "手机传图", self)
+        self.btn_phone.triggered.connect(self._open_phone_upload)
+        menu.addAction(self.btn_phone)
+        self.btn_relay = Action(FIF.SYNC, "云端同步", self)
+        self.btn_relay.triggered.connect(self._open_relay_sync)
+        menu.addAction(self.btn_relay)
+        self.btn_goto_map = Action(FIF.GLOBE, "地块地图", self)
+        self.btn_goto_map.triggered.connect(
+            lambda _=False: self.main.go(self.main.mapInterface))
+        menu.addAction(self.btn_goto_map)
+        self.btn_more = DropDownPushButton("更多", self)
+        self.btn_more.setFixedHeight(34)
+        self.btn_more.setMenu(menu)
+        acts.addWidget(self.btn_more)
+        head.addLayout(acts, 0)
+        return head
+
+    def _build_monitor_card(self):
+        card = SimpleCardWidget(self)
+        self.monitor_card = card
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(16, 10, 16, 10)
+        lay.setSpacing(8)
+
+        head = QHBoxLayout()
+        head.setSpacing(10)
+        title = StrongBodyLabel("收件箱监控", card)
+        title.setFont(ui_font(TYPE["subtitle"] - 1, weight=QFont.DemiBold))
+        head.addWidget(title)
+        self.mon_chip = self._chip("● 未在监控", "grey", card)
+        head.addWidget(self.mon_chip)
+        head.addStretch()
+        self.monitor_note = t_caption("", card, color=NAU["muted"])
+        head.addWidget(self.monitor_note)
+        lay.addLayout(head)
+
+        ctrl = QHBoxLayout()
+        ctrl.setSpacing(9)
+        pathbox = QFrame(card)
+        pathbox.setFixedHeight(34)
+        pathbox.setStyleSheet("QFrame { background:#FFFFFF; border:1px solid #DADFD7;"
+                              " border-radius:4px; }")
+        pb = QHBoxLayout(pathbox)
+        pb.setContentsMargins(10, 0, 10, 0)
+        pb.setSpacing(8)
+        folder_ic = QLabel(pathbox)
+        folder_ic.setFixedSize(16, 16)
+        folder_ic.setPixmap(FIF.FOLDER.icon(color=QColor(NAU["warning"])).pixmap(16, 16))
+        pb.addWidget(folder_ic)
+        self.path_label = BodyLabel(str(self.folder), pathbox)
+        self.path_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.path_label.setMinimumWidth(1)
+        self.path_label.setToolTip(str(self.folder))
+        pb.addWidget(self.path_label, 1)
+        self.inbox_count = t_caption("0 个文件", pathbox, color=NAU["muted"])
+        pb.addWidget(self.inbox_count)
+        ctrl.addWidget(pathbox, 1)
+
+        btn_dir = PushButton(FIF.FOLDER, "选择目录", card)
+        btn_dir.setFixedHeight(34)
+        btn_dir.clicked.connect(self.choose_folder)
+        ctrl.addWidget(btn_dir)
+        self.btn_once = PushButton(FIF.SYNC, "处理现有图片", card)
+        self.btn_once.setFixedHeight(34)
+        self.btn_once.clicked.connect(self.run_once)
+        ctrl.addWidget(self.btn_once)
+        self.btn_toggle = PrimaryPushButton(FIF.PLAY, "开始监控", card)
+        self.btn_toggle.setFixedHeight(34)
+        self.btn_toggle.clicked.connect(self.toggle)
+        ctrl.addWidget(self.btn_toggle)
+        lay.addLayout(ctrl)
+
+        stats = QHBoxLayout()
+        stats.setSpacing(8)
+        (self.stat_today_tile, self.stat_today_num,
+         self.stat_today_unit) = self._stat_tile(card, "今日已处理", "张", NAU["primary"])
+        (self.stat_pending_tile, self.stat_pending_num,
+         self.stat_pending_unit) = self._stat_tile(card, "待人工裁决", "条", NAU["warning"])
+        (self.stat_alert_tile, self.stat_alert_num,
+         self.stat_alert_unit) = self._stat_tile(card, "已主动提醒", "条", NAU["dark"])
+        for tile in (self.stat_today_tile, self.stat_pending_tile, self.stat_alert_tile):
+            stats.addWidget(tile, 1)
+        lay.addLayout(stats)
+        return card
+
+    def _build_ledger_card(self):
+        card = SimpleCardWidget(self)
+        self.ledger_card = card
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(16, 12, 16, 8)
+        lay.setSpacing(6)
+
+        head = QHBoxLayout()
+        head.setSpacing(8)
+        title = StrongBodyLabel("台账", card)
+        title.setFont(ui_font(TYPE["subtitle"] - 1, weight=QFont.DemiBold))
+        head.addWidget(title)
+        self.ledger_count_chip = self._chip("共 0 条", "grey", card)
+        head.addWidget(self.ledger_count_chip)
+        for key in ("全部", "小程序", "手机直传", "电脑本地"):
+            btn = QPushButton(key, card)
+            btn.setFixedHeight(26)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.clicked.connect(lambda _=False, k=key: self._set_filter(k))
+            self._filter_btns[key] = btn
+            head.addWidget(btn)
+        head.addStretch()
+        self.btn_reload = PushButton(FIF.SYNC, "刷新", card)
+        self.btn_reload.setFixedHeight(30)
+        self.btn_reload.clicked.connect(self._load_recent_rows)
+        head.addWidget(self.btn_reload)
+        self.btn_export = PushButton(FIF.SAVE, "导出 CSV", card)
+        self.btn_export.setFixedHeight(30)
+        self.btn_export.clicked.connect(self._export_ledger)
+        head.addWidget(self.btn_export)
+        lay.addLayout(head)
+        self._style_filter_btns()
+
+        lay.addWidget(self._build_table_head())
+
+        rows = QWidget(card)
+        self.box = QVBoxLayout(rows)
+        self.box.setContentsMargins(0, 0, 0, 0)
+        self.box.setSpacing(0)
+        lay.addWidget(rows)
+
+        foot = QHBoxLayout()
+        foot.setContentsMargins(4, 4, 4, 0)
+        self.status = t_caption("", card, color=NAU["muted"])
+        foot.addWidget(self.status, 1)
+        link = QLabel('<a href="#" style="color:%s; text-decoration:none;'
+                      ' font-weight:600;">查看全部台账 →</a>' % NAU["primary"], card)
+        link.setTextFormat(Qt.RichText)
+        link.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        link.setOpenExternalLinks(False)
+        link.linkActivated.connect(lambda _=False: self._open_ledger())
+        foot.addWidget(link, 0, Qt.AlignRight)
+        lay.addLayout(foot)
+        return card
+
+    def _build_table_head(self):
+        head = QFrame(self.ledger_card)
+        head.setFixedHeight(28)
+        head.setStyleSheet("QFrame { border:none; border-bottom:1px solid %s; }"
+                           % NAU["border"])
+        h = QHBoxLayout(head)
+        h.setContentsMargins(4, 0, 4, 0)
+        h.setSpacing(12)
+        h.addWidget(self._head_label("", self.COL_THUMB, head))
+        h.addWidget(self._head_label("时间", self.COL_TIME, head))
+        h.addWidget(self._head_label("来源", self.COL_SOURCE, head))
+        h.addWidget(self._head_label("文件", None, head), 1)
+        h.addWidget(self._head_label("识别结果", self.COL_RESULT, head))
+        h.addWidget(self._head_label("置信度", self.COL_CONF, head, Qt.AlignRight))
+        h.addWidget(self._head_label("强度", self.COL_SEV, head, Qt.AlignCenter))
+        h.addWidget(self._head_label("复核", self.COL_VERIFY, head, Qt.AlignCenter))
+        h.addWidget(self._head_label("操作", self.COL_ACTIONS, head, Qt.AlignRight))
+        return head
+
+    def _head_label(self, text, width, parent, align=Qt.AlignLeft):
+        lbl = t_caption(text, parent, color=NAU["muted"])
+        if width is not None:
+            lbl.setFixedWidth(width)
+        lbl.setAlignment(align | Qt.AlignVCenter)
+        return lbl
+
+    def _build_schedule_card(self):
+        card = SimpleCardWidget(self)
+        self.sched_card = card
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(16, 10, 16, 10)
+        lay.setSpacing(8)
+
+        bar = QHBoxLayout()
+        bar.setSpacing(8)
+        clock = QLabel(card)
+        clock.setFixedSize(16, 16)
+        clock.setPixmap(FIF.DATE_TIME.icon(color=QColor(NAU["warning"])).pixmap(16, 16))
+        bar.addWidget(clock)
+        title = StrongBodyLabel("定时任务", card)
+        title.setFont(ui_font(TYPE["body"] + 1, weight=QFont.DemiBold))
+        bar.addWidget(title)
+        self.sched_meta = t_caption("", card, color=NAU["muted"])
+        bar.addWidget(self.sched_meta)
+        self.sched_next = t_caption("", card, color=NAU["subtext"])
+        bar.addWidget(self.sched_next)
+        bar.addStretch()
+        self.btn_sched_run = PushButton("立即运行", card)
+        self.btn_sched_run.setFixedHeight(30)
+        self.btn_sched_run.clicked.connect(self._run_next_schedule)
+        bar.addWidget(self.btn_sched_run)
+        self.sched_link = QLabel("", card)
+        self.sched_link.setTextFormat(Qt.RichText)
+        self.sched_link.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        self.sched_link.setOpenExternalLinks(False)
+        self.sched_link.linkActivated.connect(self._toggle_manage)
+        bar.addWidget(self.sched_link)
+        lay.addLayout(bar)
+
+        self.sched_detail = QWidget(card)
+        dl = QVBoxLayout(self.sched_detail)
+        dl.setContentsMargins(0, 4, 0, 0)
+        dl.setSpacing(6)
+        self.sched_rows = QWidget(self.sched_detail)
+        self.sched_rows_layout = QVBoxLayout(self.sched_rows)
+        self.sched_rows_layout.setContentsMargins(0, 0, 0, 0)
+        self.sched_rows_layout.setSpacing(4)
+        dl.addWidget(self.sched_rows)
+        self.sched_result = CaptionLabel("", self.sched_detail)
+        self.sched_result.setTextColor(NAU["subtext"], NAU["subtext"])
+        self.sched_result.setWordWrap(True)
+        dl.addWidget(self.sched_result)
+        self.sched_detail.setVisible(False)
+        lay.addWidget(self.sched_detail)
+        self._update_manage_link()
+        return card
+
+    def _build_footer(self):
+        foot = QHBoxLayout()
+        foot.setContentsMargins(2, 0, 2, 0)
+        foot.addWidget(t_caption("稻视界 · 南京农业大学 · 诚朴勤仁", self,
+                                 color=NAU["muted"]))
+        foot.addStretch()
+        foot.addWidget(t_caption("巡检结果已落库 · 提醒规则：跨大类分歧 / 重度检出",
+                                 self, color=NAU["muted"]))
+        return foot
+
+    # ── 小部件 ──
+    def _chip(self, text, kind, parent):
+        lbl = QLabel(text, parent)
+        lbl.setAlignment(Qt.AlignCenter)
+        self._set_chip(lbl, text, kind)
+        return lbl
+
+    def _set_chip(self, lbl, text, kind="grey"):
+        bg, fg = self.CHIP_COLORS.get(kind, self.CHIP_COLORS["grey"])
+        lbl.setText(text)
+        lbl.setStyleSheet("background:%s; color:%s; border-radius:999px;"
+                          "padding:2px 9px; font-size:10.5px; font-weight:600;"
+                          % (bg, fg))
+
+    def _stat_tile(self, parent, label, unit, color):
+        tile = QFrame(parent)
+        tile.setFixedHeight(44)
+        tile.setStyleSheet("QFrame { background:#F8F9F5; border-radius:6px; }")
+        h = QHBoxLayout(tile)
+        h.setContentsMargins(14, 6, 14, 6)
+        h.setSpacing(4)
+        key = CaptionLabel(label, tile)
+        key.setTextColor(NAU["muted"], NAU["muted"])
+        h.addWidget(key)
+        h.addStretch()
+        num = QLabel("—", tile)
+        num.setFont(ui_font(TYPE["body"] + 4, weight=QFont.DemiBold))
+        num.setStyleSheet("color:%s; background:transparent;" % color)
+        h.addWidget(num)
+        suffix = CaptionLabel(unit, tile)
+        suffix.setTextColor(NAU["muted"], NAU["muted"])
+        h.addWidget(suffix, 0, Qt.AlignBottom)
+        return tile, num, suffix
+
+    def _style_filter_btns(self):
+        for key, btn in self._filter_btns.items():
+            if key == self._filter:
+                btn.setStyleSheet(
+                    "QPushButton { background:%s; color:%s; border:none;"
+                    " border-radius:12px; padding:0 10px; font-size:11px;"
+                    " font-weight:600; }" % (NAU["primary_light"], NAU["primary"]))
+            else:
+                btn.setStyleSheet(
+                    "QPushButton { background:#F5F6F2; color:%s;"
+                    " border:1px solid %s; border-radius:12px; padding:0 10px;"
+                    " font-size:11px; }" % (NAU["subtext"], NAU["border"]))
+
+    # ── 台账数据 ──
+    def _ledger_rows(self):
+        rows = []
+        try:
+            if WATCH_RESULTS.exists():
+                with open(WATCH_RESULTS, "r", encoding="utf-8-sig", newline="") as f:
+                    rows = [r for r in csv.DictReader(f) if (r.get("file") or "").strip()]
+        except Exception as e:
+            log.warning("读巡检台账失败：%s", e)
+        return rows
+
+    def _ledger_records(self):
+        rows = self._ledger_rows()
+        recs = []
+        for r in rows:
+            rec = self._row_from_csv(r)
+            rec["_source"] = watch_source(self.folder / str(rec.get("file") or ""))
+            recs.append(rec)
+        return rows, recs
+
+    def _update_filter_counts(self, recs):
+        counts = {key: 0 for key in self._filter_btns}
+        for rec in recs:
+            src = rec.get("_source") or "电脑本地"
+            if src in counts:
+                counts[src] += 1
+        self._filter_btns["全部"].setText("全部 %d" % len(recs))
+        for key in ("小程序", "手机直传", "电脑本地"):
+            self._filter_btns[key].setText("%s %d" % (key, counts.get(key, 0)))
+        self._style_filter_btns()
+
+    def _update_ledger_footer(self, shown, total):
+        self.ledger_count_chip.setText("共 %d 条" % total)
+        scope = "" if self._filter == "全部" else "（%s）" % self._filter
+        self.status.setText("台账%s最近 %d 条（共 %d 条）" % (scope, shown, total))
+
+    def _set_filter(self, key):
+        if key == self._filter:
             return
-        self._load_recent_rows()      # 保留台账历史，新结果会插到最上面
-        self.count = 0
-        self.disagree = 0
-        self.thread = _track_thread(WatchThread(self.folder, self.POLL_SECONDS))
-        self.thread.processed.connect(self._on_processed)
-        self.thread.failed.connect(lambda m: self.status.setText("巡检异常：%s" % m))
-        self.thread.start()
-        self.btn_toggle.setText("停止监控")
-        self.status.setText("监控中 · 每 %d 秒检查一次 %s" % (self.POLL_SECONDS, self.folder))
-        log_event("watch_start", folder=str(self.folder))
-
-    def run_once(self):
-        if self.thread is not None and self.thread.isRunning():
-            InfoBar.info("正在运行", "先停止当前监控再执行单次处理", duration=2500,
-                         position=InfoBarPosition.TOP, parent=self)
-            return
+        self._filter = key
+        self._style_filter_btns()
         self._load_recent_rows()
-        self.count = 0
-        self.disagree = 0
-        self.status.setText("正在处理现有图片…")
-        self.thread = _track_thread(WatchThread(self.folder, run_once=True))
-        self.thread.processed.connect(self._on_processed)
-        self.thread.finished_once.connect(
-            lambda n: self.status.setText("处理完成 · 本次共 %d 张" % n))
-        self.thread.failed.connect(lambda m: self.status.setText("处理异常：%s" % m))
-        self.thread.start()
 
     def _clear_rows(self):
-        while self.box.count():
-            item = self.box.takeAt(0)
+        self._clear_box(self.box)
+        self._has_rows = False
+
+    @staticmethod
+    def _clear_box(layout):
+        while layout.count():
+            item = layout.takeAt(0)
             w = item.widget()
             if w is not None:
                 w.setParent(None)
                 w.deleteLater()
+            elif item.layout() is not None:
+                WatchInterface._clear_box(item.layout())
+
+    def _show_empty(self, text=None):
+        tip = t_body(text or "收件箱为空。把病叶照片复制到上面这个目录，程序会自动处理。",
+                     self, muted=True)
+        tip.setAlignment(Qt.AlignCenter)
+        self.box.addWidget(tip)
+        self.box.addStretch(1)
+
+    def _load_recent_rows(self):
+        """把台账（watch/results.csv）里最近的记录读回表格。"""
+        self._clear_rows()
+        rows, recs = self._ledger_records()
+        self._update_filter_counts(recs)
+        filtered = [r for r in recs
+                    if self._filter == "全部" or r.get("_source") == self._filter]
+        shown = filtered[-self.RECENT_ROWS:]
+        for rec in shown:
+            self._add_table_row(rec)
+        self._update_ledger_footer(len(shown), len(recs))
+        if not recs:
+            self._show_empty()
+        elif not shown:
+            self._show_empty("当前筛选没有记录，换一个来源看看。")
+        self._refresh_monitor_stats(rows, recs)
 
     def _source_of(self, rec):
         """来源：实时记录带 phone_from；从台账读回来的没有这个字段，回查伴随文件"""
@@ -10217,69 +10513,139 @@ class WatchInterface(QWidget):
         return watch_source(self.folder / str(rec.get("file") or ""))
 
     def _thumb_for(self, rec):
-        """缩略图（带缓存，刷新列表时不必重新解码）"""
+        """表格缩略图（方形裁切 + 缓存，刷新列表时不必重新解码）"""
         name = str(rec.get("file") or "")
         if not name:
             return None
         if name not in self._thumb_cache:
-            self._thumb_cache[name] = watch_thumb_pixmap(self.folder / name)
-        return self._thumb_cache[name]
+            pix = watch_thumb_pixmap(self.folder / name, size=(80, 80))
+            if pix is not None:
+                side = min(pix.width(), pix.height())
+                if side <= 0:
+                    pix = None
+                else:
+                    x = (pix.width() - side) // 2
+                    y = (pix.height() - side) // 2
+                    pix = pix.copy(x, y, side, side).scaled(
+                        40, 40, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            if pix is not None:
+                self._thumb_cache[name] = pix
+        return self._thumb_cache.get(name)
 
-    def _add_row_card(self, rec):
-        """把一条结果渲染成卡片插到最上面（实时处理和读台账共用同一套渲染）"""
-        card = SimpleCardWidget(self)
-        card.setFixedHeight(74)          # 比原来高一点，放得下缩略图
-        lay = QHBoxLayout(card)
-        lay.setContentsMargins(12, 8, 12, 8)
-        lay.setSpacing(12)
-
-        # 缩略图：列表原来只有文件名，「这条是哪张图」得点开才知道
-        thumb = self._thumb_for(rec)
-        if thumb is not None:
-            pic = ImageLabel(card)
-            pic.setPixmap(thumb)
-            pic.setFixedSize(thumb.width(), thumb.height())
-            lay.addWidget(pic)
-
-        col = QVBoxLayout()
-        col.setSpacing(2)
-        head = QHBoxLayout()
-        head.setSpacing(8)
-        # 来源色标：小程序=蓝 / 手机直传=绿 / 电脑本地=灰
+    def _add_table_row(self, rec):
+        """把一条结果渲染成台账表格行（实时处理和读台账共用同一套渲染）"""
+        if not self._has_rows:
+            self._clear_box(self.box)
+            self._has_rows = True
         src = self._source_of(rec)
         meta = SOURCE_META.get(src) or SOURCE_META["电脑本地"]
-        head.addWidget(t_body("%s %s" % (meta["dot"], src), card, color=meta["color"]))
-        stamp = str(rec.get("time") or "")[:16]      # 识别时间：2026-10-14 11:01
-        if stamp:
-            head.addWidget(t_caption(stamp, card, color=NAU["muted"]))
-        mark = {True: "✅", False: "⚠", "": ""}.get(rec.get("verify_agree"), "")
-        title = "%s　%s%s" % (rec.get("file", ""), rec.get("cls") or "未检出",
-                             ("（%.0f%%）" % (rec["conf"] * 100)) if rec.get("conf") else "")
-        head.addWidget(StrongBodyLabel(title, card), 1)
-        col.addLayout(head)
 
-        detail = "强度 %s" % (rec.get("severity") or "—")
-        if rec.get("verify"):
-            detail += "　｜　复核：%s %s" % (rec["verify"], mark)
-        if rec.get("note"):
-            detail += "　｜　%s" % rec["note"]
-        col.addWidget(t_caption(detail, card, color=NAU["subtext"]))
-        lay.addLayout(col, 1)
+        row = QFrame(self)
+        row.setObjectName("watchRow")
+        row.setFixedHeight(self.ROW_H)
+        row.setStyleSheet("QFrame#watchRow { background:transparent; border:none;"
+                          " border-bottom:1px solid %s; }" % NAU["divider"])
+        h = QHBoxLayout(row)
+        h.setContentsMargins(4, 2, 4, 2)
+        h.setSpacing(12)
 
-        # 右侧两个图标按钮：先「标记」再「跳过去看」。
-        # 用图标而不是文字：窄窗口下也不会把文件名挤没。
-        btn_map = hover_text_button(FIF.PIN, "标记到地图", card)
+        thumb = self._thumb_for(rec)
+        pic = QLabel(row)
+        pic.setFixedSize(self.COL_THUMB, self.COL_THUMB)
+        if thumb is not None:
+            pic.setPixmap(thumb)
+        else:
+            pic.setStyleSheet("background:#E7EAE3; border-radius:4px;")
+        h.addWidget(pic)
+
+        stamp = str(rec.get("time") or "")
+        stamp = stamp[5:16] if len(stamp) >= 16 else stamp
+        tm = t_caption(stamp or "—", row, color=NAU["subtext"])
+        tm.setFixedWidth(self.COL_TIME)
+        h.addWidget(tm)
+
+        srcbox = QWidget(row)
+        srcbox.setFixedWidth(self.COL_SOURCE)
+        sh = QHBoxLayout(srcbox)
+        sh.setContentsMargins(0, 0, 0, 0)
+        sh.setSpacing(5)
+        dot = QLabel("●", srcbox)
+        dot.setStyleSheet("color:%s; background:transparent; font-size:9px;"
+                          % meta["color"])
+        sh.addWidget(dot)
+        sh.addWidget(t_caption(src, srcbox, color=meta["color"]))
+        sh.addStretch()
+        h.addWidget(srcbox)
+
+        name = str(rec.get("file") or "")
+        file_lbl = t_body(name, row, color=NAU["subtext"])
+        file_lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        file_lbl.setMinimumWidth(1)
+        file_lbl.setToolTip(name)
+        h.addWidget(file_lbl, 1)
+
+        cls = str(rec.get("cls") or "")
+        result = QLabel(cls or "未检出", row)
+        result.setFont(ui_font(TYPE["body"], weight=QFont.DemiBold))
+        result.setStyleSheet("color:%s; background:transparent;"
+                             % (NAU["dark"] if cls and cls != "其他" else NAU["muted"]))
+        result.setFixedWidth(self.COL_RESULT)
+        h.addWidget(result)
+
+        try:
+            conf = float(rec.get("conf") or 0)
+        except (TypeError, ValueError):
+            conf = 0.0
+        conf_lbl = t_body("%.0f%%" % (conf * 100) if conf > 0 else "—", row,
+                          color=NAU["subtext"])
+        conf_lbl.setFixedWidth(self.COL_CONF)
+        conf_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        h.addWidget(conf_lbl)
+
+        sev = str(rec.get("severity") or "")
+        sev_kind = {"重": "red", "中": "amber", "轻": "green", "无": "grey"}.get(sev, "grey")
+        sev_box = QWidget(row)
+        sev_box.setFixedWidth(self.COL_SEV)
+        sb = QHBoxLayout(sev_box)
+        sb.setContentsMargins(0, 0, 0, 0)
+        sb.addWidget(self._chip(sev or "未评估", sev_kind, sev_box), 0, Qt.AlignCenter)
+        h.addWidget(sev_box)
+
+        agree = rec.get("verify_agree")
+        if agree is True:
+            vtext, vkind = "一致", "green"
+        elif agree is False:
+            vtext, vkind = "分歧", "red"
+        elif rec.get("verify"):
+            vtext, vkind = "未复核", "grey"
+        else:
+            vtext, vkind = "—", "grey"
+        verify_box = QWidget(row)
+        verify_box.setFixedWidth(self.COL_VERIFY)
+        vb = QHBoxLayout(verify_box)
+        vb.setContentsMargins(0, 0, 0, 0)
+        vb.addWidget(self._chip(vtext, vkind, verify_box), 0, Qt.AlignCenter)
+        h.addWidget(verify_box)
+
+        act = QWidget(row)
+        act.setFixedWidth(self.COL_ACTIONS)
+        ah = QHBoxLayout(act)
+        ah.setContentsMargins(0, 0, 0, 0)
+        ah.setSpacing(4)
+        ah.addStretch()
+        btn_map = hover_text_button(FIF.PIN, "标记到地图", act)
         btn_map.setToolTip("标记到地块地图\n"
                            "· 照片有 GPS → 直接按拍摄坐标落点\n"
                            "· 没有 GPS → 落成「待落点」，去地图上点一下位置")
         btn_map.clicked.connect(lambda _=None, r=dict(rec): self._mark_to_map(r))
-        lay.addWidget(btn_map)
-
-        btn_goto = hover_text_button(FIF.GLOBE, "跳转到地图", card)
+        ah.addWidget(btn_map)
+        btn_goto = hover_text_button(FIF.GLOBE, "跳转到地图", act)
         btn_goto.setToolTip("跳转到地块地图，看这个点位落在哪")
         btn_goto.clicked.connect(lambda _=None, r=dict(rec): self._goto_map(r))
-        lay.addWidget(btn_goto)
-        self.box.insertWidget(0, card)          # 新的放最上面
+        ah.addWidget(btn_goto)
+        h.addWidget(act)
+
+        self.box.insertWidget(0, row)
         while self.box.count() > self.RECENT_ROWS:
             item = self.box.takeAt(self.box.count() - 1)
             w = item.widget()
@@ -10289,7 +10655,7 @@ class WatchInterface(QWidget):
 
     @staticmethod
     def _row_from_csv(r):
-        """CSV 行 → 卡片用的记录（台账里 verify_agree 存的是 True/False/空 三种字符串）"""
+        """CSV 行 → 表格用的记录（台账里 verify_agree 存的是 True/False/空 三种字符串）"""
         raw = (r.get("verify_agree") or "").strip().lower()
         agree = True if raw == "true" else (False if raw == "false" else "")
         try:
@@ -10305,30 +10671,148 @@ class WatchInterface(QWidget):
                 "severity": r.get("severity", ""), "verify": r.get("verify", ""),
                 "verify_agree": agree, "note": r.get("note", "")}
 
-    def _load_recent_rows(self):
-        """把台账（watch/results.csv）里最近的记录读回列表。
-
-        台账一直有记录，之前只是没人读回界面 —— 于是「手机上能看到结果、电脑上空的」。
-        """
-        self._clear_rows()
-        rows = []
+    # ── 监控统计 ──
+    def _inbox_file_count(self):
         try:
-            if WATCH_RESULTS.exists():
-                with open(WATCH_RESULTS, "r", encoding="utf-8-sig", newline="") as f:
-                    rows = [r for r in csv.DictReader(f) if (r.get("file") or "").strip()]
-        except Exception as e:
-            log.warning("读巡检台账失败：%s", e)
-        if not rows:
-            self._show_empty()
+            return sum(1 for p in self.folder.iterdir()
+                       if p.is_file() and p.suffix.lower() in KNOWN_EXTENSIONS)
+        except OSError:
+            return 0
+
+    def _refresh_monitor_stats(self, rows=None, recs=None):
+        if rows is None:
+            rows = self._ledger_rows()
+        today = datetime.now().strftime("%Y-%m-%d")
+        n_today = sum(1 for r in rows
+                      if str(r.get("time", "")).startswith(today))
+        if recs is None:
+            n_pending = sum(1 for r in rows
+                            if self._row_from_csv(r)["verify_agree"] is False)
+        else:
+            n_pending = sum(1 for r in recs if r.get("verify_agree") is False)
+        try:
+            events = read_jsonl(EVENT_LOG, limit=5000)
+        except Exception:
+            events = []
+        n_alerts = sum(1 for e in events
+                       if e.get("kind") == "watch_alert"
+                       and str(e.get("time", "")).startswith(today))
+
+        self.stat_today_num.setText(str(n_today))
+        self.stat_pending_num.setText(str(n_pending))
+        self.stat_alert_num.setText(str(n_alerts))
+        self._last_total = len(rows)
+        self._last_time = str(rows[-1].get("time", ""))[:16] if rows else ""
+        self.inbox_count.setText("%d 个文件" % self._inbox_file_count())
+        if self._monitor_state == "idle":
+            self._refresh_monitor_note()
+
+    def _refresh_monitor_note(self):
+        if self._last_total:
+            self.monitor_note.setText("上次处理 %s · 累计 %d 条"
+                                      % (self._last_time or "—", self._last_total))
+        else:
+            self.monitor_note.setText("尚未处理过 · 累计 0 条")
+
+    def _set_monitor_state(self, state, note=None):
+        self._monitor_state = state
+        kind, text = {
+            "idle": ("grey", "● 未在监控"),
+            "monitoring": ("green", "● 监控中"),
+            "processing": ("amber", "● 处理中"),
+        }.get(state, ("grey", "● 未在监控"))
+        self._set_chip(self.mon_chip, text, kind)
+        if note is not None:
+            self.monitor_note.setText(note)
+        elif state == "idle":
+            self._refresh_monitor_note()
+
+    def refresh_candidates(self):
+        """刷新收件箱文件数与统计（手机传图 / 云端同步之后调用）"""
+        self.inbox_count.setText("%d 个文件" % self._inbox_file_count())
+        self._refresh_monitor_stats()
+
+    # ── 监控操作 ──
+    def choose_folder(self):
+        d = QFileDialog.getExistingDirectory(self, "选择要巡检的目录", str(self.folder))
+        if d:
+            self.folder = Path(d)
+            self.path_label.setText(d)
+            self.path_label.setToolTip(d)
+            self._thumb_cache.clear()
+            self._load_recent_rows()
+            self.refresh_candidates()
+
+    def toggle(self):
+        if self.thread is not None and self.thread.isRunning():
+            self.thread.stop()
+            self.thread.wait(3000)
+            self.btn_toggle.setText("开始监控")
+            self._load_recent_rows()
+            self._set_monitor_state("idle", "已停止 · 本次共处理 %d 张" % self.count)
             return
-        # 正序插入 + 每次插到 0 号位 = 最新的在最上面
-        # （之前用了 reversed，结果最旧的跑到了最上面）
-        for r in rows[-self.RECENT_ROWS:]:
-            rec = self._row_from_csv(r)
-            rec["_source"] = watch_source(self.folder / str(rec.get("file") or ""))
-            self._add_row_card(rec)
-        self.status.setText("台账最近 %d 条（共 %d 条）"
-                            % (min(len(rows), self.RECENT_ROWS), len(rows)))
+        self._load_recent_rows()      # 保留台账历史，新结果会插到最上面
+        self.count = 0
+        self.disagree = 0
+        self.thread = _track_thread(WatchThread(self.folder, self.POLL_SECONDS))
+        self.thread.processed.connect(self._on_processed)
+        self.thread.failed.connect(self._on_watch_failed)
+        self.thread.start()
+        self.btn_toggle.setText("停止监控")
+        self._set_monitor_state("monitoring",
+                                "监控中 · 每 %d 秒检查一次" % self.POLL_SECONDS)
+        log_event("watch_start", folder=str(self.folder))
+
+    def run_once(self):
+        if self.thread is not None and self.thread.isRunning():
+            InfoBar.info("正在运行", "先停止当前监控再执行单次处理", duration=2500,
+                         position=InfoBarPosition.TOP, parent=self)
+            return
+        self._load_recent_rows()
+        self.count = 0
+        self.disagree = 0
+        self._set_monitor_state("processing", "正在处理现有图片…")
+        self.thread = _track_thread(WatchThread(self.folder, run_once=True))
+        self.thread.processed.connect(self._on_processed)
+        self.thread.finished_once.connect(self._on_once_finished)
+        self.thread.failed.connect(self._on_watch_failed)
+        self.thread.start()
+
+    def _on_once_finished(self, n):
+        self._load_recent_rows()
+        self._set_monitor_state("idle", "处理完成 · 本次共 %d 张" % n)
+        self.refresh_candidates()
+
+    def _on_watch_failed(self, msg):
+        self.monitor_note.setText("巡检异常：%s" % msg)
+        self._set_chip(self.mon_chip, "● 异常", "red")
+
+    def _on_processed(self, rec):
+        self.count += 1
+        if rec.get("verify_agree") is False:
+            self.disagree += 1
+        alert = alert_level(rec)
+        if alert:
+            # 先落事件再刷新统计，否则「已主动提醒」会晚一条才更新
+            log_event("watch_alert", file=rec.get("file"), reason=alert,
+                      cls=rec.get("cls"))
+        self._load_recent_rows()
+        if self._monitor_state in ("monitoring", "processing"):
+            self._set_chip(self.mon_chip,
+                           "● 监控中" if self._monitor_state == "monitoring"
+                           else "● 处理中",
+                           "green" if self._monitor_state == "monitoring" else "amber")
+            self.monitor_note.setText("已处理 %d 张 · 复核分歧 %d 次"
+                                      % (self.count, self.disagree))
+        if alert:
+            InfoBar.warning("巡检提醒：%s" % rec.get("file"), alert, duration=6000,
+                            position=InfoBarPosition.TOP, parent=self)
+        # 有 GPS 的图会被自动落库，地图要跟着实时更新（不然得手动点刷新）
+        try:
+            self.main.mapInterface.refresh()
+        except Exception:
+            log.debug("巡检后刷新地图失败", exc_info=True)
+        self.main.reportInterface.reload()
 
     def _goto_map(self, rec):
         """跳到地块地图看这条结果（先刷新，保证刚标记的点立刻可见）"""
@@ -10398,56 +10882,113 @@ class WatchInterface(QWidget):
             InfoBar.error("标记失败", str(e)[:120], duration=5000,
                           position=InfoBarPosition.TOP, parent=self)
 
-    def _on_processed(self, rec):
-        self.count += 1
-        if rec.get("verify_agree") is False:
-            self.disagree += 1
-        self.status.setText("已处理 %d 张 · 复核分歧 %d 次" % (self.count, self.disagree))
-        self._add_row_card(rec)
-        # 有 GPS 的图会被自动落库，地图要跟着实时更新（不然得手动点刷新）
-        try:
-            self.main.mapInterface.refresh()
-        except Exception:
-            log.debug("巡检后刷新地图失败", exc_info=True)
-        alert = alert_level(rec)
-        if alert:
-            InfoBar.warning("巡检提醒：%s" % rec.get("file"), alert, duration=6000,
-                            position=InfoBarPosition.TOP, parent=self)
-            log_event("watch_alert", file=rec.get("file"), reason=alert,
-                      cls=rec.get("cls"))
-        self.main.reportInterface.reload()
-
     # ── 定时任务 ──
+    def _schedule_when(self, item):
+        if item.get("freq") == "weekly":
+            try:
+                wd = (int(item.get("weekday", 1)) - 1) % 7
+            except (TypeError, ValueError):
+                wd = 0
+            return "每周%s %s" % ("一二三四五六日"[wd], item.get("time", ""))
+        return "每天 %s" % item.get("time", "")
+
+    @staticmethod
+    def _next_run_at(item, now=None):
+        now = now or datetime.now()
+        try:
+            hh, mm = [int(x) for x in str(item.get("time", "09:00")).split(":")]
+        except ValueError:
+            hh, mm = 9, 0
+        cand = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        if item.get("freq") == "weekly":
+            try:
+                wd = (int(item.get("weekday", 1)) - 1) % 7
+            except (TypeError, ValueError):
+                wd = 0
+            cand += timedelta(days=(wd - now.weekday()) % 7)
+            if cand <= now:
+                cand += timedelta(days=7)
+            return cand
+        if cand <= now:
+            cand += timedelta(days=1)
+        return cand
+
+    def _next_schedule_item(self, items=None):
+        items = [it for it in (items or load_schedules()) if it.get("enabled")]
+        if not items:
+            return None
+        now = datetime.now()
+        return min(((it, self._next_run_at(it, now)) for it in items),
+                   key=lambda pair: pair[1])
+
+    @staticmethod
+    def _fmt_next(at):
+        days = (at.date() - datetime.now().date()).days
+        if days == 0:
+            day = "今天"
+        elif days == 1:
+            day = "明天"
+        else:
+            day = "周" + "一二三四五六日"[at.weekday()]
+        return "%s %s" % (day, at.strftime("%H:%M"))
+
+    def _update_manage_link(self):
+        text = "收起 ↑" if self._sched_expanded else "管理 →"
+        self.sched_link.setText(
+            '<a href="#" style="color:%s; text-decoration:none; font-weight:600;">%s</a>'
+            % (NAU["primary"], text))
+
+    def _toggle_manage(self, *_):
+        self._sched_expanded = not self._sched_expanded
+        self.sched_detail.setVisible(self._sched_expanded)
+        self._update_manage_link()
+
     def _reload_schedules(self):
-        """重建定时任务列表（保留标题那一行）"""
-        while self.sched_card.viewLayout.count() > 1:
-            item = self.sched_card.viewLayout.takeAt(1)
-            w = item.widget()
-            if w is not None:
-                w.setParent(None)
-                w.deleteLater()
-            elif item.layout() is not None:
-                self._clear_layout(item.layout())
-        for it in load_schedules():
+        """重建定时任务列表（折叠条只显示摘要）"""
+        self._clear_box(self.sched_rows_layout)
+        items = load_schedules()
+        enabled = [it for it in items if it.get("enabled")]
+        self.sched_meta.setText("%d 项 · %d 项启用" % (len(items), len(enabled)))
+        nxt = self._next_schedule_item(items)
+        if nxt is None:
+            self.sched_next.setText("下次运行：无已启用任务")
+        else:
+            item, at = nxt
+            self.sched_next.setText("下次运行：%s · %s"
+                                    % (self._fmt_next(at), item.get("name", "")))
+        for it in items:
             row = QHBoxLayout()
-            when = ("每周%s %s" % ("一二三四五六日"[(int(it.get("weekday", 1)) - 1) % 7],
-                                  it.get("time", ""))
-                    if it.get("freq") == "weekly" else "每天 %s" % it.get("time", ""))
-            row.addWidget(BodyLabel("%s　·　%s　·　%s"
-                                    % (it.get("name", ""), when,
-                                       ACTION_LABELS.get(it.get("action"), it.get("action"))),
-                                    self.sched_card), 1)
+            row.setSpacing(8)
+            row.addWidget(BodyLabel("%s　·　%s" % (it.get("name", ""),
+                                                   self._schedule_when(it)),
+                                    self.sched_rows))
+            row.addWidget(t_caption("动作：%s" % ACTION_LABELS.get(
+                it.get("action"), it.get("action")), self.sched_rows,
+                color=NAU["muted"]))
             if it.get("last_run"):
-                row.addWidget(t_caption("上次 %s" % it["last_run"][5:16], self.sched_card,
-                                        color=NAU["subtext"]))
-            b_run = PushButton("立即运行", self.sched_card)
-            b_run.clicked.connect(lambda _=None, x=dict(it): self.run_now(x))
+                row.addWidget(t_caption("上次 %s" % str(it["last_run"])[5:16],
+                                        self.sched_rows, color=NAU["muted"]))
+            row.addStretch()
+            b_run = PushButton("立即运行", self.sched_rows)
+            b_run.setFixedHeight(28)
+            b_run.clicked.connect(lambda _=False, x=dict(it): self.run_now(x))
             row.addWidget(b_run)
             b_tog = TransparentPushButton("已启用" if it.get("enabled") else "已停用",
-                                          self.sched_card)
-            b_tog.clicked.connect(lambda _=None, x=it.get("id"): self._toggle_schedule(x))
+                                          self.sched_rows)
+            b_tog.clicked.connect(lambda _=False, x=it.get("id"): self._toggle_schedule(x))
             row.addWidget(b_tog)
-            self.sched_card.viewLayout.addLayout(row)
+            self.sched_rows_layout.addLayout(row)
+        if not items:
+            self.sched_rows_layout.addWidget(
+                t_caption("还没有定时任务", self.sched_rows, color=NAU["muted"]))
+
+    def _run_next_schedule(self):
+        nxt = self._next_schedule_item()
+        if nxt is None:
+            InfoBar.info("没有可运行的任务", "请先在「管理」里启用定时任务",
+                         duration=3000, position=InfoBarPosition.TOP, parent=self)
+            return
+        self.run_now(nxt[0])
 
     def _toggle_schedule(self, sid):
         items = load_schedules()
@@ -10474,6 +11015,7 @@ class WatchInterface(QWidget):
         InfoBar.success("定时任务完成", first, duration=6000,
                         position=InfoBarPosition.TOP, parent=self)
 
+    # ── 打开 / 导出 ──
     def _open_relay_sync(self):
         dlg = RelaySyncDialog(parent=self.window())
         dlg.exec()
@@ -10484,7 +11026,7 @@ class WatchInterface(QWidget):
         log_event("relay_sync_dialog")
 
     def _open_phone_upload(self):
-        """手机传图：上传的原图直接落进收件箱，顺带刷新待处理列表"""
+        """手机传图：上传的原图直接落进收件箱，顺带刷新文件数"""
         dlg = PhoneUploadDialog(self.folder, parent=self.window())
         dlg.exec()
         try:
@@ -10503,11 +11045,31 @@ class WatchInterface(QWidget):
             InfoBar.error("打不开台账", str(e), duration=4000,
                           position=InfoBarPosition.TOP, parent=self)
 
+    def _export_ledger(self):
+        if not WATCH_RESULTS.exists() or WATCH_RESULTS.stat().st_size == 0:
+            InfoBar.warning("没有台账", "还没有巡检记录可以导出", duration=3000,
+                            position=InfoBarPosition.TOP, parent=self)
+            return
+        default = str(Path.home() / ("巡检台账_%s.csv"
+                                     % datetime.now().strftime("%Y%m%d_%H%M")))
+        path, _ = QFileDialog.getSaveFileName(self, "导出巡检台账", default,
+                                              "CSV 文件 (*.csv)")
+        if not path:
+            return
+        try:
+            shutil.copyfile(str(WATCH_RESULTS), path)
+            log_event("watch_export", path=path)
+            InfoBar.success("已导出", path, duration=5000,
+                            position=InfoBarPosition.TOP, parent=self)
+        except Exception as e:
+            log.exception("导出巡检台账失败")
+            InfoBar.error("导出失败", str(e)[:120], duration=5000,
+                          position=InfoBarPosition.TOP, parent=self)
+
     def leave(self):
         if self.thread is not None and self.thread.isRunning():
             self.thread.stop()
             self.thread.wait(3000)
-
 
 # ══════════════════════════════════════════════════════════════
 # 教学资料：题库与案例库（导入 → 结构化 → 可追溯）

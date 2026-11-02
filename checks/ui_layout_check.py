@@ -114,6 +114,61 @@ check("加载天气数据后 1120 仍无横向溢出",
       (home.scroll.widget().minimumSizeHint().width(), home.scroll.viewport().width()))
 home.grab().save(str(OUT / "home.png"))
 
+# ── 自动巡检布局 ──
+win.resize(1380, 900)
+win.switchTo(win.watchInterface)
+QTest.qWait(350)
+wi = win.watchInterface
+
+# 造 10 条台账：5 小程序 / 2 手机直传 / 3 电脑本地
+inbox = OUT / "inbox"
+inbox.mkdir(parents=True, exist_ok=True)
+_lines = ["time,file,cls,conf,boxes,severity,verify,verify_agree,note"]
+for i in range(10):
+    name = "phone_%02d.jpg" % i
+    m.cv2.imwrite(str(inbox / name), demo)
+    side = Path(str(inbox / name) + ".phone.json")
+    if i % 2 == 0:
+        side.write_text('{"来源": "小程序", "label": ""}', encoding="utf-8")
+    elif i in (3, 9):
+        side.write_text('{"来源": "手机直传", "label": ""}', encoding="utf-8")
+    _lines.append("2026-11-02 1%d:%02d:00,%s,白叶枯病,0.8%d,2,重,,,"
+                  % (i % 4 + 1, i * 7 % 60, name, i))
+m.WATCH_RESULTS.parent.mkdir(parents=True, exist_ok=True)
+m.WATCH_RESULTS.write_text("\n".join(_lines) + "\n", encoding="utf-8")
+wi._load_recent_rows()
+QTest.qWait(250)
+
+check("自动巡检表格最多显示 8 行", wi.box.count() == 8, wi.box.count())
+check("来源筛选计数正确（小程序 5）",
+      wi._filter_btns["小程序"].text() == "小程序 5",
+      wi._filter_btns["小程序"].text())
+wi._set_filter("小程序")
+QTest.qWait(150)
+check("点「小程序」后只显示该来源", wi.box.count() == 5, wi.box.count())
+wi._set_filter("全部")
+QTest.qWait(150)
+check("台账状态行带总数", "台账" in wi.status.text() and "共 10 条" in wi.status.text(),
+      wi.status.text())
+check("监控状态默认「未在监控」",
+      wi._monitor_state == "idle" and "未在监控" in wi.mon_chip.text(),
+      wi.mon_chip.text())
+check("定时任务默认折叠且显示下次运行",
+      not wi.sched_detail.isVisible() and "下次运行" in wi.sched_next.text(),
+      wi.sched_next.text())
+content = wi.scroll.widget()
+check("1380 下自动巡检无横向溢出",
+      content.minimumSizeHint().width() <= wi.scroll.viewport().width(),
+      (content.minimumSizeHint().width(), wi.scroll.viewport().width()))
+wi.grab().save(str(OUT / "watch.png"))
+
+win.resize(1120, 720)
+QTest.qWait(300)
+check("1120 下自动巡检无横向溢出",
+      content.minimumSizeHint().width() <= wi.scroll.viewport().width(),
+      (content.minimumSizeHint().width(), wi.scroll.viewport().width()))
+wi.grab().save(str(OUT / "watch_1120.png"))
+
 win.close()
 print("\n通过 %d 项，失败 %d 项" % (len(PASS), len(FAIL)))
 print("产物：" + str(OUT))
