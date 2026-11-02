@@ -4366,6 +4366,7 @@ def brand_title(text, parent, size=20):
 # 卡片 / 浮层 8、按钮 / 输入框 / 条状元素 4；chip 取全圆角。
 RADIUS = {"window": 8, "card": 8, "inner": 8, "chip": 999, "button": 4, "input": 4}
 SPACE = {"xs": 4, "sm": 8, "md": 12, "lg": 16, "xl": 24, "2xl": 32, "3xl": 48}
+CONTENT_MAX_WIDTH = 1280   # 大屏内容最大宽度：≥1440 窗口时居中，避免长文本行与卡片被拉散
 SHADOW = {"sm": (6, 2), "md": (12, 3), "lg": (20, 6)}
 
 # ── 界面图标（Lucide，ISC 许可，见 resources/icons/NOTICE.txt）──────────
@@ -5961,6 +5962,7 @@ class HomeInterface(QWidget):
         self.main = main
         self.setObjectName("homeInterface")
         self._weather_busy = False
+        self._right_col_w = 376
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -5972,6 +5974,7 @@ class HomeInterface(QWidget):
         root = QVBoxLayout(content)
         root.setContentsMargins(28, 20, 28, 12)
         root.setSpacing(16)
+        self.root = root
 
         dev = "GPU (CUDA)" if self.main.device != "cpu" else "CPU"
         root.addWidget(BrandHero(self, device_text=dev))
@@ -6426,8 +6429,26 @@ class HomeInterface(QWidget):
         for i, t in enumerate(self.w_tiles):
             self.w_stats_grid.addWidget(t, i // cols, i % cols, Qt.AlignVCenter)
 
+    def _apply_content_width(self):
+        """大屏把内容限宽 1280 居中，避免卡片被拉散、文本行过长"""
+        vw = self.scroll.viewport().width() if hasattr(self, "scroll") else self.width()
+        side = max(28, (vw - CONTENT_MAX_WIDTH) // 2)
+        self.root.setContentsMargins(side, 20, side, 12)
+
+    def _reflow_right_col(self):
+        """宽屏右栏 420，常规 / 窄窗维持 376"""
+        col = getattr(self, "right_col", None)
+        if col is None:
+            return
+        w = 420 if self.width() >= 1500 else 376
+        if getattr(self, "_right_col_w", None) != w:
+            self._right_col_w = w
+            col.setFixedWidth(w)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._apply_content_width()
+        self._reflow_right_col()
         self._reflow_weather_stats()
 
     def _go_page(self, name):
@@ -6439,6 +6460,8 @@ class HomeInterface(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         self._refresh_today()
+        self._apply_content_width()
+        self._reflow_right_col()
 
     def refresh_weather(self):
         if getattr(self, "_weather_busy", False):
@@ -7596,6 +7619,7 @@ class ResultInterface(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(28, 20, 28, 12)
         root.setSpacing(10)
+        self.root = root
         head = QHBoxLayout()
         head.addWidget(page_title("识别结果与治理", self))
         head.addStretch()
@@ -7831,23 +7855,33 @@ class ResultInterface(QWidget):
         return card
 
     # ── 数据填充 ──
-    def resizeEvent(self, event):
-        """页脚用绝对定位浮在底部：三栏内容多时，放进布局会被挤成 0 高"""
-        super().resizeEvent(event)
+    def _apply_page_geometry(self):
+        """大屏内容限宽 1280 居中；页脚绝对定位跟着内容边距走"""
+        side = max(28, (self.width() - CONTENT_MAX_WIDTH) // 2)
+        self.root.setContentsMargins(side, 20, side, 12)
         foot = getattr(self, "footer", None)
         if foot is not None:
-            foot.setGeometry(28, self.height() - 66, self.width() - 56, 40)
+            foot.setGeometry(side, self.height() - 66, self.width() - 2 * side, 40)
             foot.raise_()
         self._fit_result_image()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply_page_geometry()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._apply_page_geometry()
 
     def _fit_result_image(self):
         """结果图按左栏可用宽度缩放；过高时以高度封顶，避免把整列撑爆"""
         pix = getattr(self, "_result_pixmap", None)
         if pix is None or pix.isNull():
             return
-        # 由页面宽度推算左栏可用宽度（35% 份额 - 栏间距 - 卡片内边距），
+        # 由内容宽度推算左栏可用宽度（35% 份额 - 栏间距 - 卡片内边距），
         # 不用 img_view.width()，避免「图片撑宽左栏、左栏再放宽图片」的循环。
-        content_w = max(320, self.width() - 56)
+        side = max(28, (self.width() - CONTENT_MAX_WIDTH) // 2)
+        content_w = max(320, self.width() - 2 * side)
         left_w = int((content_w - 16) * 0.35) - 36
         w = max(200, min(left_w, 520))
         scaled = pix.scaledToWidth(w, Qt.SmoothTransformation)
@@ -10095,6 +10129,7 @@ class WatchInterface(QWidget):
         self._filter = "全部"
         self._filter_btns = {}
         self._has_rows = False
+        self.recent_rows = self.RECENT_ROWS
         self._monitor_state = "idle"
         self._last_total = 0
         self._last_time = ""
@@ -10110,6 +10145,7 @@ class WatchInterface(QWidget):
         root = QVBoxLayout(content)
         root.setContentsMargins(28, 14, 28, 8)
         root.setSpacing(10)
+        self.root = root
 
         root.addLayout(self._build_head())
         root.addWidget(self._build_monitor_card())
@@ -10491,7 +10527,7 @@ class WatchInterface(QWidget):
         self._update_filter_counts(recs)
         filtered = [r for r in recs
                     if self._filter == "全部" or r.get("_source") == self._filter]
-        shown = filtered[-self.RECENT_ROWS:]
+        shown = filtered[-self.recent_rows:]
         for rec in shown:
             self._add_table_row(rec)
         self._update_ledger_footer(len(shown), len(recs))
@@ -10646,7 +10682,7 @@ class WatchInterface(QWidget):
         h.addWidget(act)
 
         self.box.insertWidget(0, row)
-        while self.box.count() > self.RECENT_ROWS:
+        while self.box.count() > self.recent_rows:
             item = self.box.takeAt(self.box.count() - 1)
             w = item.widget()
             if w is not None:
@@ -11065,6 +11101,29 @@ class WatchInterface(QWidget):
             log.exception("导出巡检台账失败")
             InfoBar.error("导出失败", str(e)[:120], duration=5000,
                           position=InfoBarPosition.TOP, parent=self)
+
+    def _apply_content_width(self):
+        """大屏把内容限宽 1280 居中"""
+        vw = self.scroll.viewport().width() if hasattr(self, "scroll") else self.width()
+        side = max(28, (vw - CONTENT_MAX_WIDTH) // 2)
+        self.root.setContentsMargins(side, 14, side, 8)
+
+    def _reflow_rows(self):
+        """高一点的窗口多显示几行台账；1380×900 仍是 8 条"""
+        rows = 12 if self.height() >= 950 else self.RECENT_ROWS
+        if rows != self.recent_rows:
+            self.recent_rows = rows
+            self._load_recent_rows()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply_content_width()
+        self._reflow_rows()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._apply_content_width()
+        self._reflow_rows()
 
     def leave(self):
         if self.thread is not None and self.thread.isRunning():

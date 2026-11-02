@@ -169,6 +169,44 @@ check("1120 下自动巡检无横向溢出",
       (content.minimumSizeHint().width(), wi.scroll.viewport().width()))
 wi.grab().save(str(OUT / "watch_1120.png"))
 
+# ── 1920 全屏（决赛演示基线）──
+win.resize(1920, 1080)
+QTest.qWait(400)
+win.switchTo(win.homeInterface)
+QTest.qWait(300)
+check("1920 首页右栏约 420", 400 <= home.right_col.width() <= 440,
+      home.right_col.width())
+check("1920 首页内容限宽居中", home.root.contentsMargins().left() >= 200,
+      home.root.contentsMargins().left())
+check("1920 首页无横向溢出",
+      home.scroll.widget().minimumSizeHint().width() <= home.scroll.viewport().width(),
+      (home.scroll.widget().minimumSizeHint().width(), home.scroll.viewport().width()))
+home.grab().save(str(OUT / "home_1920.png"))
+
+win.switchTo(win.resultInterface)
+QTest.qWait(300)
+lw, rw = ri.left_card.width(), ri.right_col.width()
+ratio_l = lw / max(1, lw + rw)
+check("1920 结果页仍为 35% 主从", 0.30 <= ratio_l <= 0.40,
+      "left=%d right=%d ratio=%.1f%%" % (lw, rw, ratio_l * 100))
+check("1920 结果页内容限宽居中", ri.root.contentsMargins().left() >= 200,
+      ri.root.contentsMargins().left())
+ri.grab().save(str(OUT / "result_1920.png"))
+
+win.switchTo(win.watchInterface)
+QTest.qWait(300)
+check("1920 巡检台账按高度显示 10 条",
+      wi.box.count() == 10 and wi.recent_rows == 12,
+      (wi.box.count(), wi.recent_rows))
+check("1920 巡检台账卡限宽约 1280", wi.ledger_card.width() <= 1300,
+      wi.ledger_card.width())
+check("1920 巡检页内容限宽居中", wi.root.contentsMargins().left() >= 200,
+      wi.root.contentsMargins().left())
+check("1920 巡检页无横向溢出",
+      wi.scroll.widget().minimumSizeHint().width() <= wi.scroll.viewport().width(),
+      (wi.scroll.widget().minimumSizeHint().width(), wi.scroll.viewport().width()))
+wi.grab().save(str(OUT / "watch_1920.png"))
+
 win.close()
 print("\n通过 %d 项，失败 %d 项" % (len(PASS), len(FAIL)))
 print("产物：" + str(OUT))
