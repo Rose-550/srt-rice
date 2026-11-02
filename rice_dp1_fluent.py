@@ -13764,6 +13764,7 @@ class MapInterface(QWidget):
         self.main = main
         self.setObjectName("mapInterface")
         self._agent_busy = False
+        self._agent_tools = 0
         # 手动标记 / 最优施药路线（点先记在内存，点「保存标记」才落库）
         self._pending_marks = []              # [{lon,lat,glon,glat,cls}] WGS-84 为准
         self._mark_route_origin = None        # (wlon, wlat) 出发点
@@ -13771,143 +13772,433 @@ class MapInterface(QWidget):
         self._route_origin_mode = False       # 当前是否在"选出发点"状态（再点按钮=取消）
         self._want_route_after_load = False   # 地图还没加载完时记下意图，加载完自动继续
         self._last_batch = None               # 最近一次保存的批次 (id, batch_no)
-
-        root = QVBoxLayout(self)
-        root.setContentsMargins(32, 24, 32, 24)
-        root.setSpacing(10)
-        head = QHBoxLayout()
-        head.addWidget(page_title("地块地图", self))
-        head.addStretch()
-        self.lbl_stat = CaptionLabel("", self)
-        head.addWidget(self.lbl_stat)
-        self.btn_web_map = PushButton(FIF.GLOBE, "交互地图", self)
-        self.btn_web_map.setToolTip("在独立窗口里打开 Leaflet 交互地图（支持热力图）")
-        self.btn_web_map.clicked.connect(self.open_web_window)
-        head.addWidget(self.btn_web_map)
-        self.chk_route = CheckBox("显示巡田路线", self)
-        self.chk_route.setChecked(True)
-        self.chk_route.stateChanged.connect(lambda _=None: self._push_to_web())
-        head.addWidget(self.chk_route)
-        self.btn_refresh = PushButton(FIF.SYNC, "刷新", self)
-        self.btn_refresh.clicked.connect(self.refresh)
-        head.addWidget(self.btn_refresh)
-        self.btn_import = PushButton(FIF.FOLDER_ADD, "导入照片并落点", self)
-        self.btn_import.setToolTip("选择带 GPS 的田间照片，导入档案库并（可选）跑一遍识别")
-        self.btn_import.clicked.connect(self.import_photos)
-        head.addWidget(self.btn_import)
-        self.btn_pin = PushButton(FIF.PIN, "粘贴坐标落点", self)
-        self.btn_pin.setToolTip("手机水印/地图 App 复制的坐标直接粘贴落点——"
-                                "照片没有 GPS 时最省事的补法")
-        self.btn_pin.clicked.connect(self.manual_pin)
-        head.addWidget(self.btn_pin)
-        self.btn_manage = PushButton(FIF.LIBRARY, "记录管理", self)
-        self.btn_manage.setToolTip("逐条查看识别结果与来源（📱手机 / 💻电脑），可随时删除")
-        self.btn_manage.clicked.connect(self.manage_records)
-        head.addWidget(self.btn_manage)
-        self.btn_export = PushButton(FIF.SAVE, "导出点位", self)
-        self.btn_export.clicked.connect(self.export_points)
-        head.addWidget(self.btn_export)
-        root.addLayout(head)
-
-        # 筛选行：只决定「画哪些」，不改右侧 Agent 工具的统计口径
-        filt = QHBoxLayout()
-        filt.setSpacing(10)
-        filt.addWidget(BodyLabel("筛选", self))
-        self.cmb_days = ComboBox(self)
-        for _label, _val in (("全部时间", None), ("最近 7 天", 7),
-                             ("最近 30 天", 30), ("最近 90 天", 90)):
-            self.cmb_days.addItem(_label, userData=_val)
-        self.cmb_days.setMinimumWidth(120)
-        self.cmb_days.setToolTip("按拍摄时间筛选点位；风险分、巡田路线、密集区域会一起跟着重算")
-        filt.addWidget(self.cmb_days)
-        self.cmb_cls = ComboBox(self)
-        self.cmb_cls.addItem("全部类别", userData=None)
-        for _name in CLASS_NAMES:
-            self.cmb_cls.addItem(_name, userData=_name)
-        self.cmb_cls.setMinimumWidth(140)
-        self.cmb_cls.setToolTip("只看某一类病虫害的点位与密集区域")
-        filt.addWidget(self.cmb_cls)
-        self.chk_heat = CheckBox("热力图", self)
-        self.chk_heat.setToolTip("叠一层热力，快速看出病虫害集中在哪片（交互地图下生效）")
-        filt.addWidget(self.chk_heat)
-        filt.addStretch()
-        self.btn_spray = PushButton(FIF.GLOBE, "查施药窗口", self)
-        self.btn_spray.setToolTip("逐地块查天气，算今天能不能打药；结果标在地图上（30 分钟缓存）")
-        self.btn_spray.clicked.connect(self.query_spray)
-        filt.addWidget(self.btn_spray)
-        root.addLayout(filt)
-        self.cmb_days.currentIndexChanged.connect(self._on_filter_changed)
-        self.cmb_cls.currentIndexChanged.connect(self._on_filter_changed)
-        self.chk_heat.stateChanged.connect(self._on_filter_changed)
-
-        body = QHBoxLayout()
-        body.setSpacing(12)
-
-        # 左：地图
-        left = SimpleCardWidget(self)
-        lv = QVBoxLayout(left)
-        lv.setContentsMargins(10, 10, 10, 10)
-        self.map_stack = QStackedWidget(left)
-        native_page = QWidget(left)
-        self.map_holder = QVBoxLayout(native_page)
-        self.map_holder.setContentsMargins(0, 0, 0, 0)
-        self.web_page = QWidget(left)
-        self.web_layout = QVBoxLayout(self.web_page)
-        self.web_layout.setContentsMargins(0, 0, 0, 0)
-        self.map_stack.addWidget(native_page)      # 0：轻量（原生瓦片，无需 GL/Key）
-        self.map_stack.addWidget(self.web_page)    # 1：交互（Leaflet + QtWebEngine）
-        lv.addWidget(self.map_stack, 1)
-        self.lbl_map_tip = CaptionLabel("", left)
-        lv.addWidget(self.lbl_map_tip)
-        body.addWidget(left, 7)
-        self.web_view = None      # 页内不再创建 WebEngine 视图（原因见 MapWebWindow 说明）
-        self.bridge = None
-        self._web_window = None
-        self._spray = {}              # 地块 → 施药窗口状态（查过才有）
+        self._spray = {}                      # 地块 → 施药窗口状态（查过才有）
         self._spray_at = ""
         self._spray_busy = False
         self._days_filter = None
         self._cls_filter = None
         self._filter_note = ""
-        self.canvas = self._build_canvas()
+        self._right_col_w = None
+        self.web_view = None      # 页内不再创建 WebEngine 视图（原因见 MapWebWindow 说明）
+        self.bridge = None
+        self._web_window = None
+        self.map_agent = None
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.scroll = ScrollArea(self)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        content = QWidget(self.scroll)
+        content.setObjectName("mapContent")
+        root = QVBoxLayout(content)
+        root.setContentsMargins(28, 14, 28, 6)
+        root.setSpacing(8)
+        self.root = root
+
+        root.addLayout(self._build_head())
+        body = QHBoxLayout()
+        body.setSpacing(16)
+        body.addWidget(self._build_map_card(), 1)
+        body.addWidget(self._build_right_column(), 0)
+        root.addLayout(body, 1)
+        root.addLayout(self._build_footer())
+
+        self.scroll.setWidget(content)
+        outer.addWidget(self.scroll)
+
         self._pt_records = []
+        self.canvas = self._build_canvas()
         if self.canvas is not None:
+            self.canvas.show_labels = False      # 点位标签会重叠；详情改由点击弹窗 + 右侧风险列表承担
             try:
-                # markerClicked 给了序号：点一个点就弹这条记录的详情
                 self.canvas.markerClicked.connect(self._on_marker_clicked)
             except Exception as e:
                 log.debug("接地图点位点击失败：%s", e)
         self.map_stack.setCurrentIndex(0)
+        self._update_agent_badge()
 
-        # 右：风险列表 + Agent 分析
-        right = SimpleCardWidget(self)
-        rv = QVBoxLayout(right)
-        rv.setContentsMargins(16, 14, 16, 14)
-        rv.setSpacing(8)
-        rv.addWidget(brand_title("地块风险", right))
-        self.risk_list = QListWidget(right)
-        self.risk_list.setMinimumHeight(150)
-        rv.addWidget(self.risk_list, 1)
-        row_btn = QHBoxLayout()
-        self.btn_analyze = PrimaryPushButton(FIF.ROBOT, "让 Agent 分析这片区域", right)
-        self.btn_analyze.clicked.connect(self.analyze_region)
-        row_btn.addWidget(self.btn_analyze)
-        self.btn_stop = PushButton("停止", right)
-        self.btn_stop.setEnabled(False)
-        self.btn_stop.clicked.connect(self.stop_analysis)
-        row_btn.addWidget(self.btn_stop)
-        rv.addLayout(row_btn)
-        self.agent_out = TextEdit(right)
+        QTimer.singleShot(300, self.refresh)
+
+    # ── 页头 / 地图卡 / 右栏 ──
+    def _build_head(self):
+        head = QHBoxLayout()
+        head.setSpacing(16)
+        left = QVBoxLayout()
+        left.setSpacing(2)
+        left.addWidget(page_title("地块地图", self))
+        sub = t_caption("识别点位、地块风险与巡田路线 · 点位来自手机 / 小程序 / 电脑 · "
+                        "坐标已转为高德 GCJ-02", self, color=NAU["muted"])
+        sub.setWordWrap(True)
+        sub.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        sub.setMinimumWidth(1)
+        left.addWidget(sub)
+        head.addLayout(left, 1)
+
+        acts = QHBoxLayout()
+        acts.setSpacing(8)
+        acts.setContentsMargins(0, 8, 0, 0)
+        self.btn_import = PushButton(FIF.FOLDER_ADD, "导入照片并落点", self)
+        self.btn_import.setFixedHeight(34)
+        self.btn_import.setToolTip("选择带 GPS 的田间照片，导入档案库并（可选）跑一遍识别")
+        self.btn_import.clicked.connect(self.import_photos)
+        acts.addWidget(self.btn_import)
+
+        menu = RoundMenu(parent=self)
+        self.btn_web_map = Action(FIF.GLOBE, "交互地图", self)
+        self.btn_web_map.setToolTip("在独立窗口里打开 Leaflet 交互地图（支持热力图）")
+        self.btn_web_map.triggered.connect(lambda _=False: self.open_web_window())
+        menu.addAction(self.btn_web_map)
+        self.btn_pin = Action(FIF.PIN, "粘贴坐标落点", self)
+        self.btn_pin.setToolTip("手机水印/地图 App 复制的坐标直接粘贴落点——"
+                                "照片没有 GPS 时最省事的补法")
+        self.btn_pin.triggered.connect(lambda _=False: self.manual_pin())
+        menu.addAction(self.btn_pin)
+        self.btn_manage = Action(getattr(FIF, "LIBRARY", FIF.DOCUMENT), "记录管理", self)
+        self.btn_manage.setToolTip("逐条查看识别结果与来源（手机 / 电脑），可随时删除")
+        self.btn_manage.triggered.connect(lambda _=False: self.manage_records())
+        menu.addAction(self.btn_manage)
+        self.btn_export = Action(FIF.SAVE, "导出点位", self)
+        self.btn_export.triggered.connect(lambda _=False: self.export_points())
+        menu.addAction(self.btn_export)
+        self.btn_spray = Action(FIF.GLOBE, "查施药窗口", self)
+        self.btn_spray.setToolTip("逐地块查天气，算今天能不能打药；结果标在地图上（30 分钟缓存）")
+        self.btn_spray.triggered.connect(lambda _=False: self.query_spray())
+        menu.addAction(self.btn_spray)
+        self.btn_more = DropDownPushButton("更多", self)
+        self.btn_more.setFixedHeight(34)
+        self.btn_more.setMenu(menu)
+        acts.addWidget(self.btn_more)
+
+        self.btn_refresh = TransparentToolButton(FIF.SYNC, self)
+        self.btn_refresh.setFixedSize(34, 34)
+        self.btn_refresh.setToolTip("刷新点位、风险列表与地图")
+        self.btn_refresh.clicked.connect(self.refresh)
+        acts.addWidget(self.btn_refresh)
+        head.addLayout(acts, 0)
+        return head
+
+    def _build_map_card(self):
+        card = SimpleCardWidget(self)
+        self.map_card = card
+        v = QVBoxLayout(card)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+
+        head = QWidget(card)
+        h = QHBoxLayout(head)
+        h.setContentsMargins(14, 10, 14, 6)
+        h.setSpacing(8)
+        title = StrongBodyLabel("地图", head)
+        title.setFont(ui_font(TYPE["subtitle"] - 2, weight=QFont.DemiBold))
+        h.addWidget(title)
+        self.lbl_stat = t_caption("", head, color=NAU["muted"])
+        self.lbl_stat.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.lbl_stat.setMinimumWidth(1)
+        h.addWidget(self.lbl_stat, 1)
+        v.addWidget(head)
+
+        bar = QWidget(card)
+        b = QHBoxLayout(bar)
+        b.setContentsMargins(14, 0, 14, 8)
+        b.setSpacing(6)
+        self.cmb_days = ComboBox(bar)
+        for _label, _val in (("全部时间", None), ("最近 7 天", 7),
+                             ("最近 30 天", 30), ("最近 90 天", 90)):
+            self.cmb_days.addItem(_label, userData=_val)
+        self.cmb_days.setFixedWidth(112)
+        self.cmb_days.setFixedHeight(30)
+        self.cmb_days.setToolTip("按拍摄时间筛选点位；风险分与巡田路线会一起跟着重算")
+        b.addWidget(self.cmb_days)
+        self.cmb_cls = ComboBox(bar)
+        self.cmb_cls.addItem("全部类别", userData=None)
+        for _name in CLASS_NAMES:
+            self.cmb_cls.addItem(_name, userData=_name)
+        self.cmb_cls.setFixedWidth(112)
+        self.cmb_cls.setFixedHeight(30)
+        self.cmb_cls.setToolTip("只看某一类病虫害的点位与密集区域")
+        b.addWidget(self.cmb_cls)
+        self.chk_heat = QPushButton("热力图", bar)
+        self.chk_heat.setCheckable(True)
+        self.chk_heat.setFixedHeight(28)
+        self.chk_heat.setCursor(Qt.PointingHandCursor)
+        self.chk_heat.setToolTip("叠一层热力，快速看出病虫害集中在哪片（交互地图下生效）")
+        self.chk_heat.setStyleSheet(
+            "QPushButton { background:#F5F6F2; color:%s; border:1px solid %s;"
+            " border-radius:14px; padding:0 10px; font-size:11px; }"
+            "QPushButton:checked { background:%s; color:%s; border:none;"
+            " font-weight:600; }"
+            % (NAU["subtext"], NAU["border"], NAU["primary_light"], NAU["primary"]))
+        b.addWidget(self.chk_heat)
+        self.chk_route = QPushButton("巡田路线", bar)
+        self.chk_route.setCheckable(True)
+        self.chk_route.setChecked(True)
+        self.chk_route.setFixedHeight(28)
+        self.chk_route.setCursor(Qt.PointingHandCursor)
+        self.chk_route.setToolTip("在交互地图上显示按风险生成的巡田路线")
+        self.chk_route.setStyleSheet(
+            "QPushButton { background:#F5F6F2; color:%s; border:1px solid %s;"
+            " border-radius:14px; padding:0 10px; font-size:11px; }"
+            "QPushButton:checked { background:%s; color:%s; border:none;"
+            " font-weight:600; }"
+            % (NAU["subtext"], NAU["border"], NAU["primary_light"], NAU["primary"]))
+        b.addWidget(self.chk_route)
+        b.addStretch()
+        self.openlink = QLabel('<a href="#" style="color:%s; text-decoration:none;">'
+                               '新窗口 ↗</a>' % NAU["primary"], bar)
+        self.openlink.setTextFormat(Qt.RichText)
+        self.openlink.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        self.openlink.setOpenExternalLinks(False)
+        self.openlink.linkActivated.connect(lambda _=False: self.open_web_window())
+        b.addWidget(self.openlink)
+        v.addWidget(bar)
+
+        self.cmb_days.currentIndexChanged.connect(self._on_filter_changed)
+        self.cmb_cls.currentIndexChanged.connect(self._on_filter_changed)
+        self.chk_heat.toggled.connect(self._on_filter_changed)
+        self.chk_route.toggled.connect(lambda _=None: self._push_to_web())
+
+        self.map_stack = QStackedWidget(card)
+        native_page = QWidget(card)
+        self.map_holder = QVBoxLayout(native_page)
+        self.map_holder.setContentsMargins(0, 0, 0, 0)
+        self.web_page = QWidget(card)
+        self.web_layout = QVBoxLayout(self.web_page)
+        self.web_layout.setContentsMargins(0, 0, 0, 0)
+        self.map_stack.addWidget(native_page)      # 0：轻量（原生瓦片，无需 GL/Key）
+        self.map_stack.addWidget(self.web_page)    # 1：交互（Leaflet + QtWebEngine）
+        v.addWidget(self.map_stack, 1)
+
+        legend = QFrame(card)
+        legend.setStyleSheet("QFrame { background:#F8F9F5; border:none; border-radius:6px; }")
+        lh = QHBoxLayout(legend)
+        lh.setContentsMargins(12, 5, 12, 5)
+        lh.setSpacing(6)
+        lh.addWidget(t_caption("风险等级", legend, color=NAU["muted"]))
+        for color, text in (("#C0392B", "高 ≥70"), ("#D9822B", "中 40–69"),
+                            ("#E8B93B", "低 15–39"), ("#8FA98F", "轻微 <15")):
+            dot = QLabel("●", legend)
+            dot.setStyleSheet("color:%s; background:transparent; font-size:9px;" % color)
+            lh.addWidget(dot)
+            lh.addWidget(t_caption(text, legend, color=NAU["subtext"]))
+        lh.addStretch()
+        v.addWidget(legend)
+
+        tip_box = QWidget(card)
+        tb = QVBoxLayout(tip_box)
+        tb.setContentsMargins(14, 3, 14, 8)
+        tb.setSpacing(0)
+        self.lbl_map_tip = t_caption("", card, color=NAU["muted"])
+        self.lbl_map_tip.setWordWrap(True)
+        self.lbl_map_tip.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.lbl_map_tip.setMinimumWidth(1)
+        tb.addWidget(self.lbl_map_tip)
+        v.addWidget(tip_box)
+        return card
+
+    def _build_right_column(self):
+        col = QWidget(self)
+        col.setFixedWidth(396)
+        v = QVBoxLayout(col)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(12)
+        v.addWidget(self._build_risk_card(), 3)
+        v.addWidget(self._build_agent_card(), 2)
+        self.right_col = col
+        return col
+
+    def _build_risk_card(self):
+        card = SimpleCardWidget(self)
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(14, 12, 14, 10)
+        lay.setSpacing(6)
+        head = QHBoxLayout()
+        title = StrongBodyLabel("地块风险", card)
+        title.setFont(ui_font(TYPE["subtitle"] - 2, weight=QFont.DemiBold))
+        head.addWidget(title)
+        self.risk_count_chip = self._chip("0 块", "grey", card)
+        head.addWidget(self.risk_count_chip)
+        head.addStretch()
+        head.addWidget(t_caption("按风险排序", card, color=NAU["muted"]))
+        lay.addLayout(head)
+        self.risk_list = QListWidget(card)
+        self.risk_list.setMinimumHeight(120)
+        self.risk_list.setSpacing(0)
+        self.risk_list.setFocusPolicy(Qt.NoFocus)
+        self.risk_list.setStyleSheet(
+            "QListWidget { background:transparent; border:none; }"
+            "QListWidget::item { border:none; padding:0; }"
+            "QListWidget::item:selected { background:transparent; }")
+        lay.addWidget(self.risk_list, 1)
+        foot = QHBoxLayout()
+        foot.setContentsMargins(2, 4, 2, 0)
+        link = QLabel('<a href="#" style="color:%s; text-decoration:none;">'
+                      '查看全部地块 →</a>' % NAU["primary"], card)
+        link.setTextFormat(Qt.RichText)
+        link.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        link.setOpenExternalLinks(False)
+        link.linkActivated.connect(lambda _=False: self.open_web_window())
+        foot.addWidget(link, 0, Qt.AlignLeft)
+        foot.addStretch()
+        lay.addLayout(foot)
+        return card
+
+    def _build_agent_card(self):
+        card = SimpleCardWidget(self)
+        self.agent_card = card
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(14, 12, 14, 12)
+        lay.setSpacing(8)
+        head = QHBoxLayout()
+        title = StrongBodyLabel("Agent 区域分析", card)
+        title.setFont(ui_font(TYPE["subtitle"] - 2, weight=QFont.DemiBold))
+        head.addWidget(title)
+        self.agent_badge = self._chip("已查 0 个工具", "blue", card)
+        self.agent_badge.setVisible(False)
+        head.addWidget(self.agent_badge)
+        head.addStretch()
+        lay.addLayout(head)
+        self.agent_out = TextEdit(card)
         self.agent_out.setReadOnly(True)
         self.agent_out.setPlaceholderText(
-            "点上面的按钮，Agent 会自己调用地图工具（风险排序、巡田路线、密集区域…）"
+            "点下面的按钮，Agent 会自己调用地图工具（风险排序、巡田路线、密集区域…）"
             "并给出结论；调用过程会显示在这里。")
-        rv.addWidget(self.agent_out, 2)
-        body.addWidget(right, 4)
-        root.addLayout(body, 1)
+        self.agent_out.setStyleSheet(
+            "QTextEdit { background:#F7F8F5; border:none; border-radius:6px;"
+            " padding:6px; }")
+        lay.addWidget(self.agent_out, 1)
+        row = QHBoxLayout()
+        self.btn_analyze = PrimaryPushButton(FIF.ROBOT, "让 Agent 分析这片区域", card)
+        self.btn_analyze.clicked.connect(self.analyze_region)
+        row.addWidget(self.btn_analyze, 1)
+        self.btn_stop = PushButton("停止", card)
+        self.btn_stop.setEnabled(False)
+        self.btn_stop.clicked.connect(self.stop_analysis)
+        row.addWidget(self.btn_stop)
+        lay.addLayout(row)
+        return card
 
-        self.map_agent = None
-        QTimer.singleShot(300, self.refresh)
+    def _build_footer(self):
+        foot = QHBoxLayout()
+        foot.setContentsMargins(2, 2, 2, 0)
+        foot.addWidget(t_caption("稻视界 · 南京农业大学 · 诚朴勤仁", self,
+                                 color=NAU["muted"]))
+        foot.addStretch()
+        foot.addWidget(t_caption("点位数据本地存储 · 地图底图高德（本地缓存）· "
+                                 "施药窗口来自地块坐标天气", self, color=NAU["muted"]))
+        return foot
+
+    # ── 风险等级 / 小部件 ──
+    CHIP_COLORS = {
+        "green": (NAU["primary_light"], NAU["primary"]),
+        "amber": ("#FCF3E6", "#B77422"),
+        "red": ("#FBEAE7", NAU["red"]),
+        "grey": ("#F1F2EE", NAU["muted"]),
+        "blue": ("#EAF1F6", NAU["accent_blue"]),
+    }
+
+    def _chip(self, text, kind, parent):
+        lbl = QLabel(text, parent)
+        lbl.setAlignment(Qt.AlignCenter)
+        self._set_chip(lbl, text, kind)
+        return lbl
+
+    def _set_chip(self, lbl, text, kind="grey"):
+        bg, fg = self.CHIP_COLORS.get(kind, self.CHIP_COLORS["grey"])
+        lbl.setText(text)
+        lbl.setStyleSheet("background:%s; color:%s; border-radius:999px;"
+                          " padding:2px 9px; font-size:10.5px; font-weight:600;"
+                          % (bg, fg))
+
+    @staticmethod
+    def _risk_level(score):
+        if score >= 70:
+            return "高", "red", "#C0392B"
+        if score >= 40:
+            return "中", "amber", "#D9822B"
+        if score >= 15:
+            return "低", "green", "#E8B93B"
+        return "轻微", "grey", "#8FA98F"
+
+    def _risk_row(self, r, parent):
+        row = QFrame(parent)
+        row.setObjectName("riskRow")
+        row.setFixedHeight(50)
+        row.setStyleSheet("QFrame#riskRow { background:transparent; border:none;"
+                          " border-bottom:1px solid %s; }" % NAU["divider"])
+        h = QHBoxLayout(row)
+        h.setContentsMargins(2, 4, 2, 4)
+        h.setSpacing(9)
+        try:
+            score = float(r.get("风险分") or 0)
+        except (TypeError, ValueError):
+            score = 0.0
+        level, kind, color = self._risk_level(score)
+        dot = QLabel(row)
+        dot.setFixedSize(8, 8)
+        dot.setStyleSheet("background:%s; border-radius:4px;" % color)
+        h.addWidget(dot, 0, Qt.AlignTop)
+        body = QVBoxLayout()
+        body.setSpacing(1)
+        name = QLabel(str(r.get("plot") or "未命名地块"), row)
+        name.setFont(ui_font(TYPE["body"] + 1, weight=QFont.DemiBold))
+        name.setStyleSheet("color:%s; background:transparent;" % NAU["dark"])
+        name.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        name.setMinimumWidth(1)
+        name.setToolTip(name.text())
+        body.addWidget(name)
+        n = int(r.get("点数") or 0)
+        if n <= 0:
+            meta = "无记录"
+        else:
+            prefix = "近 %d 天" % self._days_filter if self._days_filter else "共"
+            cls = str(r.get("主要问题") or "")
+            meta = "%s %d 条%s记录" % (prefix, n, (" " + cls) if cls else "")
+            if score >= 70:
+                meta += " · 建议优先巡查"
+            elif r.get("最近时间"):
+                meta += " · 最近 " + str(r["最近时间"])[5:]
+        ml = QLabel(meta, row)
+        ml.setFont(ui_font(TYPE["caption"], weight=QFont.Medium))
+        ml.setStyleSheet("color:%s; background:transparent;" % NAU["muted"])
+        ml.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        ml.setMinimumWidth(1)
+        ml.setToolTip(meta)
+        body.addWidget(ml)
+        h.addLayout(body, 1)
+        h.addWidget(self._chip(level, kind, row), 0, Qt.AlignRight)
+        return row
+
+    def _update_agent_badge(self):
+        if not hasattr(self, "agent_badge"):
+            return
+        if self._agent_tools <= 0:
+            self.agent_badge.setVisible(False)
+            return
+        self._set_chip(self.agent_badge, "已查 %d 个工具" % self._agent_tools, "blue")
+        self.agent_badge.setVisible(True)
+
+    # ── 大屏 / 窄窗适配 ──
+    def _apply_content_width(self):
+        if not hasattr(self, "root"):
+            return
+        vw = self.scroll.viewport().width() if hasattr(self, "scroll") else self.width()
+        side = max(28, (vw - CONTENT_MAX_WIDTH) // 2)
+        self.root.setContentsMargins(side, 14, side, 6)
+
+    def _reflow_right_col(self):
+        col = getattr(self, "right_col", None)
+        if col is None:
+            return
+        w = 396 if self.width() >= 1050 else 340
+        if self._right_col_w != w:
+            self._right_col_w = w
+            col.setFixedWidth(w)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply_content_width()
+        self._reflow_right_col()
 
     # ── 地图控件（惰性创建：模块不可用就显示提示） ──
     def _on_marker_clicked(self, idx):
@@ -13935,7 +14226,7 @@ class MapInterface(QWidget):
             self.geo = rice_geo
             canvas = rice_geo.MapCanvas(rice_geo.writable_root() / "tiles")
             self.map_holder.addWidget(canvas)
-            self.lbl_map_tip.setText("底图：高德瓦片（本地缓存，无需 Key）。点选点位可在控制台看详情。")
+            self.lbl_map_tip.setText("底图：高德瓦片（本地缓存，无需 Key）· 点选点位查看详情 · 滚轮缩放 / 拖动平移")
             return canvas
         except Exception as e:
             self.geo = None
@@ -14328,6 +14619,8 @@ class MapInterface(QWidget):
     def showEvent(self, event):
         # 切到本页就自动刷新：识别/落点后切过来立刻能看到新点位，不用手点「刷新」
         super().showEvent(event)
+        self._apply_content_width()
+        self._reflow_right_col()
         try:
             self.refresh()
         except Exception as e:
@@ -14354,26 +14647,40 @@ class MapInterface(QWidget):
         st = self._store()
         if st is None:
             self.lbl_stat.setText("地块地图模块不可用")
+            self.risk_count_chip.setText("0 块")
             self.risk_list.clear()
             self.risk_list.addItem("请检查 rice_geo.py 是否存在")
             return
         ov = map_overview_data()
-        self.lbl_stat.setText("记录 %d 条（待落点 %d）· 地块 %d 个 · %s%s"
-                              % (ov["记录总数"], ov["待落点"], ov["地块数"],
-                                 "～".join(ov["时间范围"]) if ov["时间范围"] else "无时间信息",
-                                 self._filter_note))
+        latest = ov["时间范围"][-1] if ov.get("时间范围") else "无时间信息"
+        self.lbl_stat.setText("记录 %d 条 · 已落点 %d · 最近 %s%s"
+                              % (ov["记录总数"], ov.get("已落点", 0),
+                                 latest, self._filter_note))
+        self.lbl_stat.setToolTip(self.lbl_stat.text())
         rows = plot_risk_rows(self._days_filter) or []
+        # 有名字但没有已落点记录的地块也列出来（显示「无记录」）
+        try:
+            known = {str(r.get("plot") or "") for r in rows}
+            for plot in st.plots():
+                if plot and plot not in known:
+                    rows.append({"plot": plot, "风险分": 0.0, "点数": 0,
+                                 "主要问题": "", "类别分布": {}, "最近时间": "",
+                                 "_recs": []})
+        except Exception as e:
+            log.debug("读取地块名失败：%s", e)
+        self.risk_count_chip.setText("%d 块" % len(rows))
         self.risk_list.clear()
         if not rows:
             self.risk_list.addItem("当前筛选下没有记录，换个时间范围试试"
                                    if (self._days_filter or self._cls_filter)
                                    else "还没有已落点的记录：点「导入照片并落点」开始")
         for r in rows[:20]:
-            item = QListWidgetItem("%s　风险 %.0f　%s　%d 个点位　最近 %s%s"
-                                   % (r["plot"], r["风险分"], r["主要问题"] or "—",
-                                      r["点数"], r["最近时间"], self._spray_suffix(r["plot"])))
-            item.setToolTip("类别分布：%s" % json.dumps(r["类别分布"], ensure_ascii=False))
+            item = QListWidgetItem()
+            item.setSizeHint(QSize(0, 50))
+            item.setToolTip("类别分布：%s"
+                            % json.dumps(r.get("类别分布") or {}, ensure_ascii=False))
             self.risk_list.addItem(item)
+            self.risk_list.setItemWidget(item, self._risk_row(r, self.risk_list))
         if self.canvas is not None:
             try:
                 # 与网页地图同一口径：时间和类别筛选都生效
@@ -14474,6 +14781,8 @@ class MapInterface(QWidget):
                          duration=4000, position=InfoBarPosition.TOP, parent=self)
             return
         self._agent_busy = True
+        self._agent_tools = 0
+        self._update_agent_badge()
         self.btn_analyze.setEnabled(False)
         self.btn_stop.setEnabled(True)
         self.agent_out.setPlainText("正在分析…（Agent 会自己决定调用哪些地图工具）\n")
@@ -14487,6 +14796,8 @@ class MapInterface(QWidget):
         self.map_agent.start()
 
     def _on_tool(self, name, label):
+        self._agent_tools += 1
+        self._update_agent_badge()
         self.agent_out.append("🔧 %s…" % label)
         log_event("map_agent_tool", tool=name)
 

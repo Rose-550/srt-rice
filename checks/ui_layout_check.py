@@ -266,6 +266,22 @@ rp.tabs.setCurrentItem("sessions")
 QTest.qWait(200)
 rp.grab().save(str(OUT / "report_1380.png"))
 
+# ── 地块地图 ──
+win.switchTo(win.mapInterface)
+QTest.qWait(600)
+mi = win.mapInterface
+check("地图页地图卡 + 右栏 396",
+      mi.right_col.width() == 396 and mi.map_card.width() > mi.right_col.width(),
+      (mi.map_card.width(), mi.right_col.width()))
+check("地图页风险清单已生成", mi.risk_list.count() >= 1,
+      (mi.risk_list.count(), mi.risk_count_chip.text()))
+mi.grab().save(str(OUT / "map_1380.png"))
+win.resize(1120, 720)
+QTest.qWait(300)
+check("1120 地图页无横向溢出",
+      mi.scroll.widget().minimumSizeHint().width() <= mi.scroll.viewport().width(),
+      (mi.scroll.widget().minimumSizeHint().width(), mi.scroll.viewport().width()))
+
 # ── 1920 全屏（决赛演示基线）──
 win.resize(1920, 1080)
 QTest.qWait(400)
@@ -331,6 +347,16 @@ check("1920 报告页无横向溢出",
       rp.scroll.widget().minimumSizeHint().width() <= rp.scroll.viewport().width(),
       (rp.scroll.widget().minimumSizeHint().width(), rp.scroll.viewport().width()))
 rp.grab().save(str(OUT / "report_1920.png"))
+
+win.switchTo(win.mapInterface)
+QTest.qWait(300)
+check("1920 地图页右栏 396 + 内容限宽",
+      mi.right_col.width() == 396 and mi.root.contentsMargins().left() >= 200,
+      (mi.right_col.width(), mi.root.contentsMargins().left()))
+check("1920 地图页无横向溢出",
+      mi.scroll.widget().minimumSizeHint().width() <= mi.scroll.viewport().width(),
+      (mi.scroll.widget().minimumSizeHint().width(), mi.scroll.viewport().width()))
+mi.grab().save(str(OUT / "map_1920.png"))
 
 win.close()
 print("\n通过 %d 项，失败 %d 项" % (len(PASS), len(FAIL)))
