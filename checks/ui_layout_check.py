@@ -282,6 +282,71 @@ check("1120 地图页无横向溢出",
       mi.scroll.widget().minimumSizeHint().width() <= mi.scroll.viewport().width(),
       (mi.scroll.widget().minimumSizeHint().width(), mi.scroll.viewport().width()))
 
+# ── 病害科普 ──
+win.resize(1380, 900)
+win.switchTo(win.scienceInterface)
+QTest.qWait(500)
+si = win.scienceInterface
+check("科普页 3D 画布 + 右栏 372",
+      si.right_col.width() == 372 and si.stage_card.width() > si.right_col.width(),
+      (si.stage_card.width(), si.right_col.width()))
+btns = [t[0] for t in si.btns.values()]
+rows = sorted({b.y() for b in btns})
+check("科普页病害选择为 2×3 网格",
+      len(btns) == 6 and len(rows) == 3
+      and sum(1 for b in btns if b.y() == rows[0]) == 2,
+      (len(btns), len(rows)))
+check("科普页默认选中稻纵卷叶螟",
+      si.btns["稻纵卷叶螟"][0].isChecked()
+      and sum(1 for b in btns if b.isChecked()) == 1,
+      [n for n, t in si.btns.items() if t[0].isChecked()])
+check("科普页详情卡已填充",
+      si.lbl_name.text() == "稻纵卷叶螟"
+      and si.chip_type.text() == "虫害"
+      and si.chip_drugs.text().startswith("本地库·")
+      and bool(si.lbl_sym.text()) and all(r.text() for r in si.f_rows)
+      and "百丛" in si.lbl_thresh.text(),
+      (si.lbl_name.text(), si.chip_type.text(), si.chip_drugs.text(),
+       si.lbl_thresh.text()[:18]))
+check("科普页 3D 控件在画布卡头",
+      si.btn_hd.parentWidget() is si.stage_head
+      and si.btn_spin.parentWidget() is si.stage_head
+      and si.btn_wire.parentWidget() is si.stage_head
+      and si.link_reset.parentWidget() is si.stage_head
+      and si.stage_card.isAncestorOf(si.btn_hd)
+      and si.view3d is not None,
+      (si.btn_hd.text(), si.btn_spin.text(), si.btn_wire.text()))
+si.btn_spin.setChecked(False)
+si.btn_wire.setChecked(True)
+check("科普页自动旋转 / 线框可切换",
+      si.view3d.auto_spin is False and si.view3d.wireframe is True,
+      (si.view3d.auto_spin, si.view3d.wireframe))
+si.btn_wire.setChecked(False)
+si.btn_spin.setChecked(True)
+si._select("稻瘟病")
+QTest.qWait(100)
+check("科普页切换病害同步详情与选中态",
+      si.lbl_name.text() == "稻瘟病" and si.chip_type.text() == "病害"
+      and si.btns["稻瘟病"][0].isChecked()
+      and not si.btns["稻纵卷叶螟"][0].isChecked(),
+      (si.lbl_name.text(), si.chip_type.text()))
+session_dir = OUT / "sessions"
+session_dir.mkdir(parents=True, exist_ok=True)
+(session_dir / "index.json").write_text(json.dumps([
+    {"id": "science_probe", "time": m.datetime.now().strftime("%Y-%m-%d %H:%M"),
+     "cls": "稻瘟病", "conf": 0.9, "severity": "中", "turns": 1, "mode": "image"}
+], ensure_ascii=False), encoding="utf-8")
+si._refresh_recent()
+check("科普页近期检出来自识别会话", "1 条记录" in si.lbl_recent.text(),
+      si.lbl_recent.text())
+si._select("稻纵卷叶螟")
+si.grab().save(str(OUT / "science_1380.png"))
+win.resize(1120, 720)
+QTest.qWait(300)
+check("1120 科普页无横向溢出",
+      si.scroll.widget().minimumSizeHint().width() <= si.scroll.viewport().width(),
+      (si.scroll.widget().minimumSizeHint().width(), si.scroll.viewport().width()))
+
 # ── 1920 全屏（决赛演示基线）──
 win.resize(1920, 1080)
 QTest.qWait(400)
@@ -357,6 +422,16 @@ check("1920 地图页无横向溢出",
       mi.scroll.widget().minimumSizeHint().width() <= mi.scroll.viewport().width(),
       (mi.scroll.widget().minimumSizeHint().width(), mi.scroll.viewport().width()))
 mi.grab().save(str(OUT / "map_1920.png"))
+
+win.switchTo(win.scienceInterface)
+QTest.qWait(300)
+check("1920 科普页右栏 372 + 内容限宽",
+      si.right_col.width() == 372 and si.root.contentsMargins().left() >= 200,
+      (si.right_col.width(), si.root.contentsMargins().left()))
+check("1920 科普页无横向溢出",
+      si.scroll.widget().minimumSizeHint().width() <= si.scroll.viewport().width(),
+      (si.scroll.widget().minimumSizeHint().width(), si.scroll.viewport().width()))
+si.grab().save(str(OUT / "science_1920.png"))
 
 win.close()
 print("\n通过 %d 项，失败 %d 项" % (len(PASS), len(FAIL)))

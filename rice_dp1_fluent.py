@@ -17235,6 +17235,52 @@ class ReportInterface(QWidget):
         self.reload()
 
 
+def _make_science_3d_view(parent):
+    """软件渲染 3D 视图 + 线框 / 重置视角扩展。
+
+    定义成函数内的子类，是为了保持 rice_3d 延迟导入：导入失败时页面仍能给出降级提示，
+    而不是让整个主程序启动失败。
+    """
+    try:
+        from rice_3d import Rice3DView
+    except Exception as e:
+        return None, e
+
+    class Science3DView(Rice3DView):
+        autoSpinChanged = pyqtSignal(bool)
+
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            self.wireframe = False
+
+        def mouseDoubleClickEvent(self, event):
+            super().mouseDoubleClickEvent(event)
+            self.autoSpinChanged.emit(self.auto_spin)
+
+        def reset_view(self):
+            self.yaw, self.pitch, self.zoom = -0.55, 0.30, 1.0
+            self.update()
+
+        def paintEvent(self, event):
+            super().paintEvent(event)
+            if not self.wireframe:
+                return
+            from PyQt5.QtGui import QPainter, QPen, QPolygonF
+            p = QPainter(self)
+            p.setRenderHint(QPainter.Antialiasing, True)
+            # 压淡实体面再描边：得到图解式线框，而不是在实体上叠一层乱线
+            p.fillRect(self.rect(), QColor(243, 246, 240, 208))
+            w, h = self.width(), self.height()
+            p.setPen(QPen(QColor(93, 112, 88, 200), 0.7))
+            p.setBrush(Qt.NoBrush)
+            for verts, _part, _shade in self.plant.faces:
+                pts = [self._project(v, w, h)[0] for v in verts]
+                p.drawPolygon(QPolygonF(pts))
+            p.end()
+
+    return Science3DView(parent), None
+
+
 class ScienceInterface(QWidget):
     """病害科普：可旋转的 3D 水稻植株 + 按病害高亮受害部位。
 
@@ -17242,33 +17288,203 @@ class ScienceInterface(QWidget):
     用的是程序化生成的通用植株模型，定位是科普讲解，不是诊断数据的三维重建。
     """
 
+    PART_LABELS = {"leaf": "叶片", "leaf_tip": "叶尖", "stem": "茎秆",
+                   "sheath": "叶鞘", "panicle": "稻穗", "grain": "谷粒"}
+    PART_SHORT = {"leaf": "叶", "leaf_tip": "叶尖", "stem": "茎",
+                  "sheath": "鞘", "panicle": "穗", "grain": "谷"}
+    CHIP_COLORS = {
+        "green": (NAU["primary_light"], NAU["primary"]),
+        "amber": ("#FCF3E6", "#B77422"),
+        "red": ("#FBEAE7", NAU["red"]),
+        "grey": ("#F1F2EE", NAU["muted"]),
+    }
+
     def __init__(self, main):
         super().__init__()
         self.main = main
         self.setObjectName("scienceInterface")
-
-        root = QVBoxLayout(self)
-        root.setContentsMargins(28, 20, 28, 12)
-        root.setSpacing(8)
-
-        head = QHBoxLayout()
-        head.addWidget(page_title("病害科普", self))
-        head.addStretch()
-        root.addLayout(head)
-        root.addWidget(t_caption(
-            "拖动旋转 · 滚轮缩放 · 双击暂停自动旋转　　红色高亮处 = 该病害主要侵害的部位", self))
-
-        body = QHBoxLayout()
-        body.setSpacing(12)
-
-        # 左：3D 视图
-        left = SimpleCardWidget(self)
-        ll = QVBoxLayout(left)
-        ll.setContentsMargins(6, 6, 6, 6)
         from rice_3d import DISEASE_PARTS
+        self.disease_parts = DISEASE_PARTS
         self.web = None
         self.view3d = None
         self.html_3d = APP_DIR / "3d_viewer.html"
+        self._view_error = ""
+        self._current = None
+        self._right_col_w = None
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.scroll = ScrollArea(self)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        content = QWidget(self.scroll)
+        content.setObjectName("scienceContent")
+        root = QVBoxLayout(content)
+        root.setContentsMargins(28, 10, 28, 6)
+        root.setSpacing(8)
+        self.root = root
+
+        root.addLayout(self._build_head())
+        body = QHBoxLayout()
+        body.setSpacing(12)
+        body.addWidget(self._build_stage_card(), 1)
+        body.addWidget(self._build_right_column(), 0)
+        root.addLayout(body, 1)
+        root.addLayout(self._build_footer())
+
+        self.scroll.setWidget(content)
+        outer.addWidget(self.scroll)
+
+        self._select(next(iter(DISEASE_PARTS)))
+
+    # ── 页头 / 3D 画布卡 / 右栏 ──
+    def _build_head(self):
+        head = QHBoxLayout()
+        head.setSpacing(16)
+        left = QVBoxLayout()
+        left.setSpacing(2)
+        left.addWidget(page_title("病害科普", self))
+        sub = QLabel('拖动旋转 · 滚轮缩放 · 双击暂停自动旋转 · '
+                     '<b style="color:%s">红色高亮 = 该病害主要侵害部位</b>'
+                     % NAU["red"], self)
+        sub.setTextFormat(Qt.RichText)
+        sub.setFont(ui_font(TYPE["caption"], weight=QFont.Medium))
+        sub.setStyleSheet("color:%s; background:transparent;" % NAU["muted"])
+        sub.setWordWrap(True)
+        sub.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        sub.setMinimumWidth(1)
+        left.addWidget(sub)
+        head.addLayout(left, 1)
+
+        acts = QHBoxLayout()
+        acts.setSpacing(8)
+        acts.setContentsMargins(0, 8, 0, 0)
+        self.btn_train = PushButton(FIF.EDUCATION, "去题库练习", self)
+        self.btn_train.setFixedHeight(34)
+        self.btn_train.setToolTip("把刚看过的病害带进图片考核，边看边测")
+        self.btn_train.clicked.connect(
+            lambda _=False: self.main.go(self.main.trainInterface))
+        acts.addWidget(self.btn_train)
+        self.btn_full = TransparentToolButton(FIF.FULL_SCREEN, self)
+        self.btn_full.setFixedSize(34, 34)
+        self.btn_full.setToolTip("全屏查看；再点一次退出")
+        self.btn_full.clicked.connect(self._toggle_fullscreen)
+        acts.addWidget(self.btn_full)
+        head.addLayout(acts, 0)
+        return head
+
+    def _chip_button(self, text, parent, checkable=False, accent=False):
+        b = QPushButton(text, parent)
+        b.setCheckable(checkable)
+        b.setFixedHeight(28)
+        b.setCursor(Qt.PointingHandCursor)
+        if accent:
+            b.setStyleSheet(
+                "QPushButton { background:%s; color:%s; border:1px solid transparent;"
+                " border-radius:999px; padding:0 11px; font-size:9.5pt; font-weight:600; }"
+                "QPushButton:hover { background:#E4F2E9; }"
+                % (NAU["primary_light"], NAU["primary"]))
+        else:
+            b.setStyleSheet(
+                "QPushButton { background:#F7F8F5; color:%s; border:1px solid %s;"
+                " border-radius:999px; padding:0 11px; font-size:9.5pt; }"
+                "QPushButton:hover { background:#EFF5EE; color:%s; }"
+                "QPushButton:checked { background:%s; color:%s;"
+                " border:1px solid transparent; font-weight:600; }"
+                % (NAU["subtext"], NAU["border"], NAU["primary"],
+                   NAU["primary_light"], NAU["primary"]))
+        return b
+
+    def _build_stage_card(self):
+        card = SimpleCardWidget(self)
+        self.stage_card = card
+        v = QVBoxLayout(card)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+
+        head = QWidget(card)
+        self.stage_head = head
+        h = QHBoxLayout(head)
+        h.setContentsMargins(14, 10, 14, 8)
+        h.setSpacing(8)
+        title = StrongBodyLabel("3D 病株", head)
+        title.setFont(ui_font(TYPE["subtitle"] - 2, weight=QFont.DemiBold))
+        h.addWidget(title)
+        self.lbl_stage_sub = t_caption("", head, color=NAU["muted"])
+        self.lbl_stage_sub.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.lbl_stage_sub.setMinimumWidth(1)
+        h.addWidget(self.lbl_stage_sub, 1)
+
+        self.btn_hd = self._chip_button("高清 3D", head, accent=True)
+        self.btn_hd.setToolTip("用系统浏览器打开 Three.js 高清场景"
+                               "（模型来自 Sketchfab，CC-BY-4.0）")
+        self.btn_hd.clicked.connect(self._open_3d)
+        h.addWidget(self.btn_hd)
+        self.btn_spin = self._chip_button("自动旋转", head, checkable=True)
+        self.btn_spin.setChecked(True)
+        self.btn_spin.setToolTip("双击 3D 画面也可以暂停 / 继续")
+        self.btn_spin.toggled.connect(self._set_spin)
+        h.addWidget(self.btn_spin)
+        self.btn_wire = self._chip_button("线框", head, checkable=True)
+        self.btn_wire.setToolTip("只看模型结构边线，便于讲清叶片 / 茎秆 / 稻穗的位置")
+        self.btn_wire.toggled.connect(self._set_wireframe)
+        h.addWidget(self.btn_wire)
+        self.link_reset = QLabel('<a href="#" style="color:%s; text-decoration:none;">'
+                                 '重置视角 ↺</a>' % NAU["primary"], head)
+        self.link_reset.setTextFormat(Qt.RichText)
+        self.link_reset.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        self.link_reset.setOpenExternalLinks(False)
+        self.link_reset.linkActivated.connect(lambda _=False: self._reset_view())
+        self.link_reset.setToolTip("回到默认角度与缩放")
+        h.addWidget(self.link_reset)
+        v.addWidget(head)
+
+        self.canvas = QWidget(card)
+        self.canvas.setStyleSheet("background:#EDF2E9;")
+        grid = QGridLayout(self.canvas)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(0)
+        self._make_3d_view(self.canvas)
+        if self.view3d is not None:
+            grid.addWidget(self.view3d, 0, 0)
+        elif self.web is not None:
+            grid.addWidget(self.web, 0, 0)
+        else:
+            fallback = QLabel("3D 视图加载失败\n%s\n\n可点右上角「高清 3D」用浏览器打开场景。"
+                              % self._view_error, self.canvas)
+            fallback.setAlignment(Qt.AlignCenter)
+            fallback.setWordWrap(True)
+            fallback.setStyleSheet("color:%s; background:transparent; font-size:11pt;"
+                                   % NAU["muted"])
+            grid.addWidget(fallback, 0, 0)
+
+        overlay = QWidget(self.canvas)
+        overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        ov = QHBoxLayout(overlay)
+        ov.setContentsMargins(12, 0, 12, 12)
+        self.hint_label = QLabel("拖动旋转 · 滚轮缩放 · 双击暂停自动旋转", overlay)
+        self.hint_label.setStyleSheet("background:rgba(255,255,255,0.86); color:#5C665F;"
+                                      " border-radius:4px; padding:3px 9px; font-size:9pt;")
+        self.hint_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        ov.addWidget(self.hint_label, 0, Qt.AlignBottom)
+        ov.addStretch()
+        self.legend_label = QLabel('<span style="color:%s;">●</span>&nbsp; '
+                                   '红色高亮 = 主要侵害部位' % NAU["red"], overlay)
+        self.legend_label.setTextFormat(Qt.RichText)
+        self.legend_label.setStyleSheet("background:rgba(255,255,255,0.9); color:%s;"
+                                        " border:1px solid %s; border-radius:999px;"
+                                        " padding:5px 12px; font-size:9pt;"
+                                        % (NAU["subtext"], NAU["border"]))
+        self.legend_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        ov.addWidget(self.legend_label, 0, Qt.AlignBottom)
+        grid.addWidget(overlay, 0, 0, Qt.AlignBottom)
+        overlay.raise_()
+        self.canvas_overlay = overlay
+        grid.setRowStretch(0, 1)
+        v.addWidget(self.canvas, 1)
+        return card
+
+    def _make_3d_view(self, parent):
         # QtWebEngine 内嵌默认关闭：它在没有 OpenGL 的环境里初始化 Chromium 时会
         # 直接访问冲突崩溃（C++ 层，try/except 拦不住），无法保证每台机器都安全。
         # 想试内嵌就把环境变量 RICE_EMBED_3D 设为 1；否则用已验证的软件渲染器，
@@ -17276,47 +17492,363 @@ class ScienceInterface(QWidget):
         if os.environ.get("RICE_EMBED_3D") == "1" and self.html_3d.exists():
             try:
                 from PyQt5.QtWebEngineWidgets import QWebEngineView
-                from PyQt5.QtCore import QUrl
-                self.web = QWebEngineView(left)
+                self.web = QWebEngineView(parent)
                 self.web.load(QUrl.fromLocalFile(str(self.html_3d)))
-                ll.addWidget(self.web, 1)
+                self.web.loadFinished.connect(self._on_web_loaded)
+                self.btn_wire.setEnabled(False)
+                self.btn_wire.setToolTip("高清 3D 场景暂不支持线框显示")
+                return
             except Exception as e:
                 log.warning("QtWebEngine 不可用（%s），回退软件渲染", e)
                 self.web = None
-        if self.web is None:
-            from rice_3d import Rice3DView
-            self.view3d = Rice3DView(left)
-            ll.addWidget(self.view3d, 1)
-        body.addWidget(left, 3)
+        self.view3d, err = _make_science_3d_view(parent)
+        if self.view3d is None:
+            self._view_error = str(err or "未知错误")
+            self.btn_spin.setEnabled(False)
+            self.btn_wire.setEnabled(False)
+            log.warning("3D 视图不可用：%s", self._view_error)
+        else:
+            self.view3d.autoSpinChanged.connect(self.btn_spin.setChecked)
 
-        # 右：病害选择 + 说明
-        right = SimpleCardWidget(self)
-        rl = QVBoxLayout(right)
-        rl.setContentsMargins(16, 14, 16, 14)
-        rl.setSpacing(6)
-        btn_hd = PushButton("高清 3D", right)
-        btn_hd.setToolTip("用系统浏览器打开 Three.js 高清场景（模型来自 Sketchfab，CC-BY-4.0）")
-        btn_hd.clicked.connect(self._open_3d)
-        rl.addWidget(btn_hd)
-        rl.addSpacing(4)
-        rl.addWidget(t_block("选择病害", right))
-        self.disease_parts = DISEASE_PARTS
+    def _on_web_loaded(self, ok):
+        if not ok or self.web is None:
+            return
+        self.web.page().runJavaScript(
+            "window.setSpin && window.setSpin(%s);"
+            % ("true" if self.btn_spin.isChecked() else "false"))
+        if self._current:
+            self._select(self._current)
+
+    def _build_right_column(self):
+        col = QWidget(self)
+        v = QVBoxLayout(col)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(12)
+        v.addWidget(self._build_pick_card(), 0)
+        v.addWidget(self._build_detail_card(), 1)
+        self.right_col = col
+        return col
+
+    def _build_pick_card(self):
+        card = SimpleCardWidget(self)
+        v = QVBoxLayout(card)
+        v.setContentsMargins(14, 10, 14, 10)
+        v.setSpacing(8)
+
+        head = QHBoxLayout()
+        head.setSpacing(8)
+        title = StrongBodyLabel("选择病害", card)
+        title.setFont(ui_font(TYPE["subtitle"] - 2, weight=QFont.DemiBold))
+        head.addWidget(title)
+        head.addStretch()
+        count = QLabel(card)
+        self._set_chip(count, "%d 类" % len(self.disease_parts), "grey")
+        head.addWidget(count)
+        v.addLayout(head)
+
+        grid = QGridLayout()
+        grid.setSpacing(7)
+        grid.setContentsMargins(0, 2, 0, 0)
         self.btns = {}
-        for name in DISEASE_PARTS:
-            b = PushButton(name, right)
+        for i, name in enumerate(self.disease_parts):
+            b = QPushButton(card)
+            b.setCheckable(True)
+            b.setAutoExclusive(True)
+            b.setFixedHeight(38)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setStyleSheet(
+                "QPushButton { background:#FFFFFF; border:1px solid #DADFD7;"
+                " border-radius:6px; }"
+                "QPushButton:hover { background:#FAFBF8; border-color:#B9C4B7; }"
+                "QPushButton:checked { background:#F4FAF6;"
+                " border:1.5px solid %s; }" % NAU["primary"])
+            lay = QHBoxLayout(b)
+            lay.setContentsMargins(10, 0, 10, 0)
+            lay.setSpacing(8)
+            dot = QLabel(b)
+            dot.setFixedSize(7, 7)
+            dot.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            lay.addWidget(dot)
+            lbl = QLabel(name, b)
+            lbl.setFont(ui_font(TYPE["body"]))
+            lbl.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            lay.addWidget(lbl, 1)
+            b.setToolTip(name)
             b.clicked.connect(lambda _=False, n=name: self._select(n))
-            rl.addWidget(b)
-            self.btns[name] = b
-        rl.addSpacing(8)
-        rl.addWidget(t_block("症状要点", right))
-        self.lbl_sym = t_body("", right)
-        self.lbl_sym.setWordWrap(True)
-        rl.addWidget(self.lbl_sym)
-        rl.addStretch()
-        body.addWidget(right, 2)
-        root.addLayout(body, 1)
+            grid.addWidget(b, i // 2, i % 2)
+            self.btns[name] = (b, dot, lbl)
+        v.addLayout(grid)
+        return card
 
-        self._select(next(iter(DISEASE_PARTS)))
+    def _build_detail_card(self):
+        card = SimpleCardWidget(self)
+        self.detail_card = card
+        v = QVBoxLayout(card)
+        v.setContentsMargins(14, 10, 14, 8)
+        v.setSpacing(2)
+
+        self.lbl_name = QLabel("", card)
+        self.lbl_name.setFont(display_font(TYPE["subtitle"] - 1))
+        self.lbl_name.setStyleSheet("color:%s; background:transparent;"
+                                    % NAU["primary"])
+        self.lbl_name.setTextFormat(Qt.PlainText)
+        self.lbl_name.setWordWrap(True)
+        v.addWidget(self.lbl_name)
+
+        chips = QHBoxLayout()
+        chips.setSpacing(6)
+        chips.setContentsMargins(0, 2, 0, 0)
+        self.chip_type = QLabel(card)
+        self.chip_parts = QLabel(card)
+        self.chip_drugs = QLabel(card)
+        for c in (self.chip_type, self.chip_parts, self.chip_drugs):
+            chips.addWidget(c)
+        chips.addStretch()
+        v.addLayout(chips)
+
+        v.addSpacing(4)
+        v.addWidget(self._section_title("症状要点", card))
+        self.lbl_sym = self._body_small(card)
+        v.addWidget(self.lbl_sym)
+
+        v.addWidget(self._section_title("防治要点", card))
+        self.f_rows = []
+        for i in range(3):
+            row = QHBoxLayout()
+            row.setSpacing(8)
+            row.setContentsMargins(0, 0, 0, 0)
+            num = QLabel(str(i + 1), card)
+            num.setAlignment(Qt.AlignCenter)
+            num.setFixedSize(16, 16)
+            num.setStyleSheet("background:%s; color:%s; border-radius:8px;"
+                              " font-size:8.5pt; font-weight:700;"
+                              % (NAU["primary_light"], NAU["primary"]))
+            row.addWidget(num, 0, Qt.AlignTop)
+            body = self._body_small(card)
+            row.addWidget(body, 1)
+            v.addLayout(row)
+            self.f_rows.append(body)
+
+        v.addWidget(self._section_title("防治指标", card))
+        self.lbl_thresh = self._body_small(card)
+        v.addWidget(self.lbl_thresh)
+
+        v.addStretch()
+        line = QFrame(card)
+        line.setFixedHeight(1)
+        line.setStyleSheet("background:%s; border:none;" % NAU["divider"])
+        v.addWidget(line)
+        rec = QHBoxLayout()
+        rec.setContentsMargins(0, 6, 0, 0)
+        rec.setSpacing(8)
+        self.lbl_recent = t_caption("", card, color=NAU["subtext"])
+        self.lbl_recent.setToolTip("统计近 14 天识别会话中该病害的记录数")
+        rec.addWidget(self.lbl_recent)
+        rec.addStretch()
+        link = QLabel('<a href="#" style="color:%s; text-decoration:none;">'
+                      '查看地块地图 →</a>' % NAU["primary"], card)
+        link.setTextFormat(Qt.RichText)
+        link.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        link.setOpenExternalLinks(False)
+        link.linkActivated.connect(
+            lambda _=False: self.main.go(self.main.mapInterface))
+        rec.addWidget(link)
+        v.addLayout(rec)
+        return card
+
+    def _build_footer(self):
+        foot = QHBoxLayout()
+        foot.setContentsMargins(2, 2, 2, 0)
+        foot.addWidget(t_caption("稻视界 · 南京农业大学 · 诚朴勤仁", self,
+                                 color=NAU["muted"]))
+        foot.addStretch()
+        foot.addWidget(t_caption("3D 模型随程序分发 · 症状与防治内容来自本地防治库（可追溯）",
+                                 self, color=NAU["muted"]))
+        return foot
+
+    # ── 小部件 / 数据 ──
+    def _section_title(self, text, parent):
+        lbl = QLabel(text, parent)
+        lbl.setFont(ui_font(TYPE["caption"], weight=QFont.DemiBold))
+        lbl.setStyleSheet("color:%s; background:transparent; letter-spacing:0.5px;"
+                          % NAU["muted"])
+        return lbl
+
+    def _body_small(self, parent):
+        lbl = BodyLabel("", parent)
+        lbl.setFont(ui_font(TYPE["body"] - 1))
+        lbl.setTextColor(NAU["text"], NAU["text"])
+        lbl.setWordWrap(True)
+        return lbl
+
+    def _set_chip(self, lbl, text, kind="grey"):
+        bg, fg = self.CHIP_COLORS.get(kind, self.CHIP_COLORS["grey"])
+        lbl.setText(text)
+        lbl.setStyleSheet("background:%s; color:%s; border-radius:999px;"
+                          " padding:2px 9px; font-size:9pt; font-weight:600;"
+                          % (bg, fg))
+
+    def _kind_of(self, name):
+        return "病害" if name.endswith("病") else "虫害"
+
+    def _part_labels(self, parts):
+        labels = []
+        for p in parts:
+            if p == "leaf_tip" and "leaf" in parts:
+                continue
+            label = self.PART_LABELS.get(p, p)
+            if label not in labels:
+                labels.append(label)
+        return labels
+
+    def _short_parts(self, parts):
+        short = []
+        for p in parts:
+            if p == "leaf_tip" and "leaf" in parts:
+                continue
+            label = self.PART_SHORT.get(p, p)
+            if label not in short:
+                short.append(label)
+        return "、".join(short[:2]) + (" 等" if len(short) > 2 else "")
+
+    @staticmethod
+    def _short_drug(name):
+        return (name or "").split("（")[0].strip() or name
+
+    @staticmethod
+    def _summary(items, limit=2):
+        items = [s for s in items if s]
+        if not items:
+            return ""
+        text = "；".join(items[:limit])
+        return text + " 等" if len(items) > limit else text
+
+    @staticmethod
+    def _agri_summary(items):
+        """农业防治取前两条：第二条只留第一个分句，其余在 tooltip 里给全"""
+        items = [s for s in items if s]
+        if not items:
+            return ""
+        text = items[0]
+        if len(items) > 1:
+            text += "；" + items[1].split("，")[0]
+        if len(items) > 2:
+            text += " 等"
+        return text
+
+    @staticmethod
+    def _plain(text):
+        return re.sub(r"（[^）]*）", "", text or "").strip()
+
+    def _recent_count(self, name, days=14):
+        cutoff = datetime.now() - timedelta(days=days)
+        n = 0
+        for it in load_session_index():
+            if it.get("cls") != name:
+                continue
+            try:
+                t = datetime.strptime(str(it.get("time") or "")[:16],
+                                      "%Y-%m-%d %H:%M")
+            except ValueError:
+                continue
+            if t >= cutoff:
+                n += 1
+        return n
+
+    def _refresh_recent(self):
+        if not self._current:
+            return
+        n = self._recent_count(self._current)
+        self.lbl_recent.setText("近 14 天检出 %d 条记录" % n if n
+                                else "近 14 天未检出记录")
+
+    # ── 交互 ──
+    def _select(self, name):
+        if name not in self.disease_parts:
+            return
+        self._current = name
+        parts, color, desc = self.disease_parts[name]
+        labels = self._part_labels(parts)
+        parts_txt = "、".join(labels[:2]) + (" 等" if len(labels) > 2 else "")
+        if self.web is not None:
+            js = "window.setDisease && window.setDisease(%s);" % (
+                json.dumps(name, ensure_ascii=False))
+            self.web.page().runJavaScript(js)
+        if self.view3d is not None:
+            self.view3d.set_highlight(list(parts), color)
+
+        self.lbl_stage_sub.setText("%s · %s受害" % (name, parts_txt))
+        self.lbl_stage_sub.setToolTip("主要危害部位：" + "、".join(labels))
+        self.lbl_name.setText(name)
+        kind = self._kind_of(name)
+        self._set_chip(self.chip_type, kind, "red" if kind == "病害" else "amber")
+        chip_parts_txt = labels[0] if len(labels) == 1 else self._short_parts(parts)
+        self._set_chip(self.chip_parts, "危害：" + chip_parts_txt, "grey")
+        self.chip_parts.setToolTip("主要危害部位：" + "、".join(labels))
+
+        tr = TREATMENT_DB.get(name) or {}
+        drugs = tr.get("drugs") or []
+        self._set_chip(self.chip_drugs, "本地库·%d 种" % len(drugs), "green")
+        self.chip_drugs.setToolTip("本地防治库收录 %d 种已登记药剂" % len(drugs))
+        self.lbl_sym.setText(tr.get("symptom") or desc)
+
+        agri_items = [s for s in (tr.get("agri") or []) if s]
+        bio_items = [s for s in (tr.get("bio") or []) if s]
+        agri = self._agri_summary(agri_items)
+        bio = self._plain(self._summary(bio_items, 1))
+        names = []
+        for d in drugs:
+            n = self._short_drug(d.get("name") or "")
+            if n and n not in names:
+                names.append(n)
+        drug_txt = ("、".join(names[:2]) + ("等" if len(names) > 2 else "")
+                    + "，详见防治库" if names else "见防治库")
+        self.f_rows[0].setText("农业防治：" + (agri or "—"))
+        self.f_rows[1].setText("生物防治：" + (bio or "保护天敌，减少化学用药"))
+        self.f_rows[2].setText("药剂：" + drug_txt)
+        self.f_rows[0].setToolTip("；".join(agri_items) or "—")
+        self.f_rows[1].setToolTip("；".join(bio_items) or "保护天敌，减少化学用药")
+        self.f_rows[2].setToolTip("、".join(names) + "（本地防治库收录，详见防治库）"
+                                  if names else "详见防治库")
+        self.lbl_thresh.setText(tr.get("threshold")
+                                or ((tr.get("meta") or {}).get("量化指标")) or "—")
+
+        for n, (btn, dot, lbl) in self.btns.items():
+            on = (n == name)
+            btn.setChecked(on)
+            dot.setStyleSheet("background:%s; border-radius:3.5px;"
+                              % (NAU["primary"] if on
+                                 else ("#D9822B" if self._kind_of(n) == "虫害"
+                                       else NAU["red"])))
+            lbl.setStyleSheet("color:%s; background:transparent; font-weight:%s;"
+                              % (NAU["primary"] if on else NAU["text"],
+                                 "600" if on else "400"))
+        self._refresh_recent()
+
+    def _set_spin(self, on):
+        if self.view3d is not None:
+            self.view3d.auto_spin = bool(on)
+        if self.web is not None:
+            self.web.page().runJavaScript(
+                "window.setSpin && window.setSpin(%s);"
+                % ("true" if on else "false"))
+
+    def _set_wireframe(self, on):
+        if self.view3d is not None:
+            self.view3d.wireframe = bool(on)
+            self.view3d.update()
+
+    def _reset_view(self):
+        if self.view3d is not None:
+            self.view3d.reset_view()
+        elif self.web is not None:
+            self.web.reload()
+
+    def _toggle_fullscreen(self):
+        if self.main.isFullScreen():
+            self.main.showNormal()
+        else:
+            self.main.showFullScreen()
 
     def _open_3d(self):
         """用系统浏览器打开 Three.js 场景"""
@@ -17330,17 +17862,47 @@ class ScienceInterface(QWidget):
             InfoBar.error("打开失败", str(e), duration=4000,
                           position=InfoBarPosition.TOP, parent=self)
 
-    def _select(self, name):
-        parts, color, desc = self.disease_parts[name]
-        if self.web is not None:
-            js = "window.setDisease && window.setDisease(%s);" % (
-                __import__("json").dumps(name, ensure_ascii=False))
-            self.web.page().runJavaScript(js)
-        if self.view3d is not None:
-            self.view3d.set_highlight(list(parts), color)
-        self.lbl_sym.setText(desc)
-        for n, b in self.btns.items():
-            b.setEnabled(n != name)
+    # ── 大屏 / 窄窗适配 ──
+    def _apply_content_width(self):
+        if not hasattr(self, "root"):
+            return
+        vw = self.scroll.viewport().width() if hasattr(self, "scroll") else self.width()
+        side = max(28, (vw - CONTENT_MAX_WIDTH) // 2)
+        self.root.setContentsMargins(side, 10, side, 6)
+
+    def _reflow_right_col(self):
+        col = getattr(self, "right_col", None)
+        if col is None:
+            return
+        w = 372 if self.width() >= 1050 else 340
+        if self._right_col_w != w:
+            self._right_col_w = w
+            col.setFixedWidth(w)
+
+    def _update_canvas_overlay(self):
+        """窄窗里先收提示条，避免两段浮层文字把画布最小宽度撑大"""
+        if not hasattr(self, "canvas"):
+            return
+        w = self.canvas.width()
+        if hasattr(self, "hint_label"):
+            self.hint_label.setVisible(w >= 720)
+        if hasattr(self, "legend_label"):
+            self.legend_label.setVisible(w >= 470)
+        if hasattr(self, "canvas_overlay"):
+            self.canvas_overlay.raise_()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply_content_width()
+        self._reflow_right_col()
+        self._update_canvas_overlay()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._apply_content_width()
+        self._reflow_right_col()
+        self._update_canvas_overlay()
+        self._refresh_recent()
 
 
 class MainWindow(FluentWindow):
