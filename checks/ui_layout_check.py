@@ -7,6 +7,7 @@
 """
 import os
 import sys
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -232,6 +233,39 @@ check("1120 图片页无横向溢出",
       ii.scroll.widget().minimumSizeHint().width() <= ii.scroll.viewport().width(),
       (ii.scroll.widget().minimumSizeHint().width(), ii.scroll.viewport().width()))
 
+# ── 报告记录（双标签页）──
+win.switchTo(win.reportInterface)
+QTest.qWait(300)
+rp = win.reportInterface
+rep_dir = OUT / "reports"
+rep_dir.mkdir(parents=True, exist_ok=True)
+sample_path = ROOT / "data" / "raw" / "JPEGImages" / "rice_leaf_roller_439.jpg"
+(rep_dir / "index.json").write_text(json.dumps([
+    {"path": str(sample_path), "thumb": str(sample_path), "cls_name": "白叶枯病",
+     "conf": 0.91, "device": 0, "time": "2026-11-02 12:00"}
+], ensure_ascii=False), encoding="utf-8")
+rp.reload()
+QTest.qWait(200)
+check("报告页两个标签页与会话表",
+      rp.tabs.widget("sessions").text().startswith("历史会话")
+      and rp.tabs.widget("reports").text().startswith("报告文件")
+      and rp.sessions_rows.count() >= 1,
+      (rp.tabs.widget("sessions").text(), rp.tabs.widget("reports").text(),
+       rp.sessions_rows.count()))
+rp._switch_tab("reports")
+rp.tabs.setCurrentItem("reports")
+QTest.qWait(200)
+check("报告页能渲染报告文件行", rp.reports_rows.count() >= 1, rp.reports_rows.count())
+check("1120 报告页无横向溢出",
+      rp.scroll.widget().minimumSizeHint().width() <= rp.scroll.viewport().width(),
+      (rp.scroll.widget().minimumSizeHint().width(), rp.scroll.viewport().width()))
+win.resize(1380, 900)
+QTest.qWait(300)
+rp._switch_tab("sessions")
+rp.tabs.setCurrentItem("sessions")
+QTest.qWait(200)
+rp.grab().save(str(OUT / "report_1380.png"))
+
 # ── 1920 全屏（决赛演示基线）──
 win.resize(1920, 1080)
 QTest.qWait(400)
@@ -288,6 +322,15 @@ check("1920 图片页无横向溢出",
       ii.scroll.widget().minimumSizeHint().width() <= ii.scroll.viewport().width(),
       (ii.scroll.widget().minimumSizeHint().width(), ii.scroll.viewport().width()))
 ii.grab().save(str(OUT / "image_1920.png"))
+
+win.switchTo(win.reportInterface)
+QTest.qWait(300)
+check("1920 报告页内容限宽居中", rp.root.contentsMargins().left() >= 200,
+      rp.root.contentsMargins().left())
+check("1920 报告页无横向溢出",
+      rp.scroll.widget().minimumSizeHint().width() <= rp.scroll.viewport().width(),
+      (rp.scroll.widget().minimumSizeHint().width(), rp.scroll.viewport().width()))
+rp.grab().save(str(OUT / "report_1920.png"))
 
 win.close()
 print("\n通过 %d 项，失败 %d 项" % (len(PASS), len(FAIL)))

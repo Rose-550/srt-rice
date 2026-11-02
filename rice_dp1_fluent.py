@@ -5723,7 +5723,7 @@ from qfluentwidgets import (FluentWindow, NavigationItemPosition, FluentIcon as 
                             TransparentToolButton, DropDownPushButton, RoundMenu, Action,
                             HyperlinkButton, CardWidget, SimpleCardWidget, ElevatedCardWidget,
                             HeaderCardWidget, ImageLabel, ProgressBar, IndeterminateProgressBar,
-                            ScrollArea, TextEdit, LineEdit, PasswordLineEdit, ComboBox,
+                            ScrollArea, TextEdit, LineEdit, SearchLineEdit, PasswordLineEdit, ComboBox,
                             SwitchButton, InfoBar, InfoBarPosition, MessageBox,
                             MessageBoxBase, EditableComboBox, SegmentedWidget, CheckBox,
                             isDarkTheme)
@@ -16195,51 +16195,566 @@ class SettingInterface(QWidget):
 
 
 # ── 主窗口 ────────────────────────────────────────────────────
+class _ElidedLabel(QLabel):
+    """按当前宽度右侧省略；完整文本由调用方放进 tooltip。"""
+
+    def __init__(self, text, parent=None):
+        super().__init__(text, parent)
+        self._full = text
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        fm = self.fontMetrics()
+        txt = fm.elidedText(self._full, Qt.ElideRight, max(0, self.width()))
+        if txt != self.text():
+            self.setText(txt)
+
+
 class ReportInterface(QWidget):
-    """报告记录：导出的报告都登记在这里，随时可查/可打开"""
+    """报告记录：历史会话 / 报告文件两个标准表格，可搜索、按时间与类别筛选。"""
+
+    ROW_H = 50
+    CHIP_COLORS = {
+        "green": (NAU["primary_light"], NAU["primary"]),
+        "amber": ("#FCF3E6", "#B77422"),
+        "red": ("#FBEAE7", NAU["red"]),
+        "grey": ("#F1F2EE", NAU["muted"]),
+    }
 
     def __init__(self, main):
         super().__init__()
         self.main = main
         self.setObjectName("reportInterface")
+        self._tab = "sessions"
+        self._time_filter = "all"
+        self._page_rows = 10
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(32, 24, 32, 24)
-        root.setSpacing(10)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.scroll = ScrollArea(self)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        content = QWidget(self.scroll)
+        content.setObjectName("reportContent")
+        root = QVBoxLayout(content)
+        root.setContentsMargins(28, 14, 28, 6)
+        root.setSpacing(8)
+        self.root = root
 
-        head = QHBoxLayout()
-        head.addWidget(page_title("报告记录", self))
-        head.addStretch()
-        btn_dir = PushButton(FIF.FOLDER, "打开报告目录", self)
-        btn_dir.clicked.connect(self._open_dir)
-        head.addWidget(btn_dir)
-        btn_refresh = PushButton(FIF.SYNC, "刷新", self)
-        btn_refresh.clicked.connect(self.reload)
-        head.addWidget(btn_refresh)
-        btn_ledger = PushButton(FIF.CHART if hasattr(FIF, "CHART") else FIF.DOCUMENT,
-                                "导出运行台账", self)
-        btn_ledger.setToolTip("把检测次数、AI 调用、反馈、实训答题等数据汇总成 CSV")
-        btn_ledger.clicked.connect(self._export_ledger)
-        head.addWidget(btn_ledger)
-        root.addLayout(head)
-        root.addWidget(t_caption("每次导出报告都会自动登记在这里，双击卡片可打开", self))
+        root.addLayout(self._build_head())
+        root.addLayout(self._build_tabs())
+        root.addLayout(self._build_toolbar())
+        root.addWidget(self._build_table_card(), 1)
+        root.addLayout(self._build_footer())
 
-        scroll, self.box = _scroll_body(self)
-        root.addWidget(scroll, 1)
+        self.scroll.setWidget(content)
+        outer.addWidget(self.scroll)
+
+        self._style_time_chips()
+        self.tabs.setCurrentItem("sessions")
+        self._switch_tab("sessions")
         self.reload()
 
-    # ── 列表 ──
-    def _clear(self):
-        while self.box.count():
-            item = self.box.takeAt(0)
-            w = item.widget()
-            if w is not None:
-                w.setParent(None)
-                w.deleteLater()
-            elif item.layout() is not None:
-                self._clear_layout(item.layout())
+    # ── 页头 / 标签页 / 工具栏 ──
+    def _build_head(self):
+        head = QHBoxLayout()
+        head.setSpacing(16)
+        left = QVBoxLayout()
+        left.setSpacing(2)
+        left.addWidget(page_title("报告记录", self))
+        sub = t_caption("每次识别与导出都会自动登记 · 历史会话可载入继续追问 · "
+                        "报告文件可打开 / 定位", self, color=NAU["muted"])
+        sub.setWordWrap(True)
+        sub.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        sub.setMinimumWidth(1)
+        left.addWidget(sub)
+        head.addLayout(left, 1)
 
-    def _clear_layout(self, layout):
+        acts = QHBoxLayout()
+        acts.setSpacing(8)
+        acts.setContentsMargins(0, 8, 0, 0)
+        self.btn_dir = PushButton(FIF.FOLDER, "打开报告目录", self)
+        self.btn_dir.setFixedHeight(34)
+        self.btn_dir.clicked.connect(self._open_dir)
+        acts.addWidget(self.btn_dir)
+        self.btn_ledger = PushButton(FIF.CHART if hasattr(FIF, "CHART") else FIF.DOCUMENT,
+                                     "导出运行台账", self)
+        self.btn_ledger.setFixedHeight(34)
+        self.btn_ledger.setToolTip("把检测次数、AI 调用、反馈、实训答题等数据汇总成 CSV")
+        self.btn_ledger.clicked.connect(self._export_ledger)
+        acts.addWidget(self.btn_ledger)
+        menu = RoundMenu(parent=self)
+        self.act_refresh = Action(FIF.SYNC, "刷新", self)
+        self.act_refresh.triggered.connect(lambda _=False: self.reload())
+        menu.addAction(self.act_refresh)
+        self.act_sessions = Action(FIF.SAVE, "导出全部会话索引", self)
+        self.act_sessions.triggered.connect(lambda _=False: self._export_sessions())
+        menu.addAction(self.act_sessions)
+        self.btn_more = DropDownPushButton("更多", self)
+        self.btn_more.setFixedHeight(34)
+        self.btn_more.setMenu(menu)
+        acts.addWidget(self.btn_more)
+        head.addLayout(acts, 0)
+        return head
+
+    def _build_tabs(self):
+        row = QHBoxLayout()
+        row.setSpacing(12)
+        self.tabs = SegmentedWidget(self)
+        self.tabs.addItem("sessions", "历史会话", lambda: self._switch_tab("sessions"))
+        self.tabs.addItem("reports", "报告文件", lambda: self._switch_tab("reports"))
+        row.addWidget(self.tabs)
+        row.addStretch()
+        self.tab_stats = t_caption("", self, color=NAU["muted"])
+        row.addWidget(self.tab_stats)
+        return row
+
+    def _build_toolbar(self):
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self.search = SearchLineEdit(self)
+        self.search.setPlaceholderText("搜索类别、文件名…")
+        self.search.setFixedWidth(250)
+        self.search.setFixedHeight(32)
+        self.search.textChanged.connect(lambda _: self.reload())
+        row.addWidget(self.search)
+        self.time_btns = {}
+        for key, label in (("all", "全部时间"), ("7", "近 7 天"), ("30", "近 30 天")):
+            b = QPushButton(label, self)
+            b.setFixedHeight(28)
+            b.setCursor(Qt.PointingHandCursor)
+            b.clicked.connect(lambda _=False, k=key: self._set_time(k))
+            self.time_btns[key] = b
+            row.addWidget(b)
+        self.cat_combo = ComboBox(self)
+        self.cat_combo.addItems(["全部类别"] + list(CLASS_NAMES) + ["未检出/其他"])
+        self.cat_combo.setFixedWidth(128)
+        self.cat_combo.setFixedHeight(30)
+        self.cat_combo.currentIndexChanged.connect(lambda _: self.reload())
+        row.addWidget(self.cat_combo)
+        row.addStretch()
+        self.btn_refresh = PushButton(FIF.SYNC, "刷新", self)
+        self.btn_refresh.setFixedHeight(30)
+        self.btn_refresh.clicked.connect(self.reload)
+        row.addWidget(self.btn_refresh)
+        return row
+
+    def _build_table_card(self):
+        card = SimpleCardWidget(self)
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(16, 8, 16, 8)
+        lay.setSpacing(0)
+        self.stack = QStackedWidget(card)
+        self.sessions_page, self.sessions_rows, self.sessions_status = self._build_pane(
+            "sessions")
+        self.reports_page, self.reports_rows, self.reports_status = self._build_pane(
+            "reports")
+        self.stack.addWidget(self.sessions_page)
+        self.stack.addWidget(self.reports_page)
+        lay.addWidget(self.stack)
+        return card
+
+    def _build_pane(self, kind):
+        page = QWidget(self.stack if hasattr(self, "stack") else self)
+        v = QVBoxLayout(page)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+        v.addWidget(self._table_head(kind))
+        rows = QWidget(page)
+        rows_lay = QVBoxLayout(rows)
+        rows_lay.setContentsMargins(0, 0, 0, 0)
+        rows_lay.setSpacing(0)
+        v.addWidget(rows, 1)
+        foot = QHBoxLayout()
+        foot.setContentsMargins(4, 6, 4, 0)
+        status = t_caption("", page, color=NAU["muted"])
+        status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        status.setMinimumWidth(1)
+        foot.addWidget(status, 1)
+        if kind == "sessions":
+            text, cb = "导出全部会话索引 →", self._export_sessions
+        else:
+            text, cb = "打开报告目录 →", self._open_dir
+        link = QLabel('<a href="#" style="color:%s; text-decoration:none;'
+                      ' font-weight:600;">%s</a>' % (NAU["primary"], text), page)
+        link.setTextFormat(Qt.RichText)
+        link.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        link.setOpenExternalLinks(False)
+        link.linkActivated.connect(lambda _=False, f=cb: f())
+        foot.addWidget(link, 0, Qt.AlignRight)
+        v.addLayout(foot)
+        return page, rows_lay, status
+
+    def _build_footer(self):
+        foot = QHBoxLayout()
+        foot.setContentsMargins(2, 2, 2, 0)
+        foot.addWidget(t_caption("稻视界 · 南京农业大学 · 诚朴勤仁", self,
+                                 color=NAU["muted"]))
+        foot.addStretch()
+        foot.addWidget(t_caption("运行台账：在「打开报告目录 → 运行台账 CSV」中导出",
+                                 self, color=NAU["muted"]))
+        return foot
+
+    def _table_head(self, kind):
+        head = QFrame(self)
+        head.setFixedHeight(30)
+        head.setStyleSheet("QFrame { border:none; border-bottom:1px solid %s; }"
+                           % NAU["border"])
+        h = QHBoxLayout(head)
+        h.setContentsMargins(4, 0, 4, 0)
+        h.setSpacing(12)
+        if kind == "sessions":
+            specs = ((38, "left", ""), (220, "left", "识别类别"),
+                     (180, "left", "时间"), (72, "left", "问答轮次"),
+                     (None, "left", "诊断要点"), (72, "right", "操作"))
+        else:
+            specs = ((38, "left", ""), (None, "left", "报告文件"),
+                     (80, "right", "置信度"), (180, "left", "导出时间"),
+                     (70, "right", "大小"), (108, "right", "操作"))
+        for width, align, text in specs:
+            lbl = t_caption(text, head, color=NAU["muted"])
+            if width is not None:
+                lbl.setFixedWidth(width)
+            lbl.setAlignment((Qt.AlignRight if align == "right" else Qt.AlignLeft)
+                             | Qt.AlignVCenter)
+            if width is None:
+                h.addWidget(lbl, 1)
+            else:
+                h.addWidget(lbl)
+        return head
+
+    # ── 表格行 ──
+    def _session_row(self, it, parent):
+        row = QFrame(parent)
+        row.setObjectName("reportRow")
+        row.setFixedHeight(self.ROW_H)
+        row.setStyleSheet("QFrame#reportRow { background:transparent; border:none;"
+                          " border-bottom:1px solid %s; }" % NAU["divider"])
+        h = QHBoxLayout(row)
+        h.setContentsMargins(4, 4, 4, 4)
+        h.setSpacing(12)
+        h.addWidget(self._thumb(self._session_thumb_path(it), 38, row, use_watch=True))
+
+        cls_box = QWidget(row)
+        cls_box.setFixedWidth(260)
+        ch = QHBoxLayout(cls_box)
+        ch.setContentsMargins(0, 0, 0, 0)
+        ch.setSpacing(7)
+        cls = str(it.get("cls") or "未检出")
+        cls_lbl = QLabel(cls, cls_box)
+        cls_lbl.setFont(ui_font(TYPE["body"] + 1, weight=QFont.DemiBold))
+        cls_lbl.setStyleSheet("color:%s; background:transparent;"
+                              % (NAU["dark"] if cls not in ("", "未检出") else NAU["muted"]))
+        cls_lbl.setMaximumWidth(170)
+        cls_lbl.setToolTip(cls)
+        ch.addWidget(cls_lbl)
+        sev_text, sev_kind = self._severity_display(it.get("severity"))
+        ch.addWidget(self._chip(sev_text, sev_kind, cls_box))
+        ch.addStretch(1)
+        h.addWidget(cls_box)
+
+        stamp = QLabel(str(it.get("time") or "—"), row)
+        stamp.setFont(ui_font(TYPE["caption"], weight=QFont.Medium))
+        stamp.setStyleSheet("color:%s; background:transparent;" % NAU["subtext"])
+        stamp.setFixedWidth(180)
+        h.addWidget(stamp)
+
+        turns = QLabel("%d 轮" % int(it.get("turns") or 0), row)
+        turns.setFont(ui_font(TYPE["caption"], weight=QFont.Medium))
+        turns.setStyleSheet("color:%s; background:transparent;" % NAU["subtext"])
+        turns.setFixedWidth(72)
+        h.addWidget(turns)
+
+        key = _ElidedLabel(self._session_key(it), row)
+        key.setFont(ui_font(TYPE["caption"], weight=QFont.Medium))
+        key.setStyleSheet("color:%s; background:transparent;" % NAU["subtext"])
+        key.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        key.setMinimumWidth(1)
+        key.setToolTip(key.text())
+        h.addWidget(key, 1)
+
+        act = QWidget(row)
+        act.setFixedWidth(72)
+        ah = QHBoxLayout(act)
+        ah.setContentsMargins(0, 0, 0, 0)
+        ah.addStretch()
+        b = QPushButton("载入", act)
+        b.setFixedSize(60, 28)
+        b.setCursor(Qt.PointingHandCursor)
+        b.setStyleSheet(
+            "QPushButton { background:#FFFFFF; border:1px solid #DADFD7;"
+            " border-radius:4px; color:%s; font-size:11.5px; }"
+            "QPushButton:hover { background:#F5F6F2; }" % NAU["subtext"])
+        b.clicked.connect(lambda _=False, sid=str(it.get("id") or ""):
+                          self.main.load_session(sid))
+        ah.addWidget(b)
+        h.addWidget(act)
+        return row
+
+    def _report_row(self, it, parent):
+        row = QFrame(parent)
+        row.setObjectName("reportRow")
+        row.setFixedHeight(self.ROW_H)
+        row.setStyleSheet("QFrame#reportRow { background:transparent; border:none;"
+                          " border-bottom:1px solid %s; }" % NAU["divider"])
+        h = QHBoxLayout(row)
+        h.setContentsMargins(4, 4, 4, 4)
+        h.setSpacing(12)
+
+        path = str(it.get("path") or "")
+        exists = bool(path and os.path.exists(path))
+        thumb = str(it.get("thumb") or "")
+        thumb_path = thumb if thumb and os.path.exists(thumb) else path
+        label = "PDF" if path.lower().endswith(".pdf") else "—"
+        h.addWidget(self._thumb(thumb_path, 38, row, label=label))
+
+        file_box = QWidget(row)
+        fv = QVBoxLayout(file_box)
+        fv.setContentsMargins(0, 0, 0, 0)
+        fv.setSpacing(1)
+        name = os.path.basename(path) or "未命名报告"
+        name_lbl = _ElidedLabel(name, file_box)
+        name_lbl.setFont(ui_font(TYPE["body"] + 1, weight=QFont.DemiBold))
+        name_lbl.setStyleSheet("color:%s; background:transparent;" % NAU["dark"])
+        name_lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        name_lbl.setMinimumWidth(1)
+        name_lbl.setToolTip(path)
+        fv.addWidget(name_lbl)
+        sub = QLabel(("%s · 含检测框与治理方案" % (it.get("cls_name") or "未识别"))
+                     if exists else "文件已被移动或删除", file_box)
+        sub.setFont(ui_font(TYPE["caption"], weight=QFont.Medium))
+        sub.setStyleSheet("color:%s; background:transparent;"
+                          % (NAU["muted"] if exists else NAU["red"]))
+        fv.addWidget(sub)
+        h.addWidget(file_box, 1)
+
+        try:
+            conf = float(it.get("conf") or 0)
+        except (TypeError, ValueError):
+            conf = 0.0
+        cl = QLabel("%.1f%%" % (conf * 100) if conf > 0 else "—", row)
+        cl.setFont(ui_font(TYPE["body"], weight=QFont.DemiBold))
+        cl.setStyleSheet("color:%s; background:transparent;" % NAU["primary"])
+        cl.setFixedWidth(80)
+        cl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        h.addWidget(cl)
+
+        stamp = QLabel(str(it.get("time") or "—"), row)
+        stamp.setFont(ui_font(TYPE["caption"], weight=QFont.Medium))
+        stamp.setStyleSheet("color:%s; background:transparent;" % NAU["subtext"])
+        stamp.setFixedWidth(180)
+        h.addWidget(stamp)
+
+        size = 0
+        if exists:
+            try:
+                size = os.path.getsize(path)
+            except OSError:
+                size = 0
+        sz = QLabel(self._fmt_size(size) if exists else "—", row)
+        sz.setFont(ui_font(TYPE["caption"], weight=QFont.Medium))
+        sz.setStyleSheet("color:%s; background:transparent;" % NAU["muted"])
+        sz.setFixedWidth(70)
+        sz.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        h.addWidget(sz)
+
+        act = QWidget(row)
+        act.setFixedWidth(108)
+        ah = QHBoxLayout(act)
+        ah.setContentsMargins(0, 0, 0, 0)
+        ah.setSpacing(4)
+        ah.addStretch()
+        b_open = self._icon_btn(FIF.VIEW, "打开报告", act,
+                                lambda _=False, p=path: self._open(p), exists)
+        ah.addWidget(b_open)
+        b_dir = self._icon_btn(FIF.FOLDER, "在文件夹中定位", act,
+                               lambda _=False, p=path: self._reveal(p), exists)
+        ah.addWidget(b_dir)
+        b_more = self._icon_btn(FIF.MORE, "更多操作", act, None, True)
+        b_more.clicked.connect(lambda _=False, p=path, b=b_more:
+                               self._report_menu(p, b))
+        ah.addWidget(b_more)
+        h.addWidget(act)
+        return row
+
+    def _icon_btn(self, icon, tip, parent, cb, enabled=True):
+        b = QPushButton(parent)
+        b.setFixedSize(28, 28)
+        b.setIcon(icon.icon())
+        b.setIconSize(QSize(14, 14))
+        b.setToolTip(tip)
+        b.setEnabled(enabled)
+        b.setCursor(Qt.PointingHandCursor)
+        b.setStyleSheet(
+            "QPushButton { background:#FFFFFF; border:1px solid #E2E6DF;"
+            " border-radius:4px; }"
+            "QPushButton:hover { background:#F5F6F2; }"
+            "QPushButton:disabled { background:#FAFBF8; border-color:#EFF1EA; }")
+        if cb is not None:
+            b.clicked.connect(cb)
+        return b
+
+    def _report_menu(self, path, btn):
+        exists = bool(path and os.path.exists(path))
+        menu = RoundMenu(parent=self)
+        a_open = Action(FIF.VIEW, "打开报告", self)
+        a_open.setEnabled(exists)
+        a_open.triggered.connect(lambda _=False: self._open(path))
+        menu.addAction(a_open)
+        a_dir = Action(FIF.FOLDER, "在文件夹中定位", self)
+        a_dir.setEnabled(exists)
+        a_dir.triggered.connect(lambda _=False: self._reveal(path))
+        menu.addAction(a_dir)
+        a_del = Action(FIF.DELETE, "移除索引（不删文件）", self)
+        a_del.triggered.connect(lambda _=False: self._forget(path))
+        menu.addAction(a_del)
+        menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
+
+    # ── 缩略图与格式 ──
+    def _thumb(self, path, size, parent, label="—", use_watch=False):
+        pic = QLabel(parent)
+        pic.setFixedSize(size, size)
+        pic.setAlignment(Qt.AlignCenter)
+        pic.setStyleSheet("background:#E7EAE3; border-radius:5px; color:%s;"
+                          " font-size:9px;" % NAU["muted"])
+        pix = None
+        if path and os.path.exists(str(path)) and str(path).lower().endswith(
+                (".jpg", ".jpeg", ".png", ".bmp")):
+            if use_watch:
+                pix = watch_thumb_pixmap(path, size=(size * 2, size * 2))
+            else:
+                pix = QPixmap(str(path))
+        if pix is not None and not pix.isNull():
+            side = min(pix.width(), pix.height())
+            x = (pix.width() - side) // 2
+            y = (pix.height() - side) // 2
+            pic.setPixmap(pix.copy(x, y, side, side).scaled(
+                size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        else:
+            pic.setText(label)
+        return pic
+
+    @staticmethod
+    def _session_thumb_path(it):
+        sid = str(it.get("id") or "")
+        return SESSION_DIR / ("%s.jpg" % sid) if sid else None
+
+    @staticmethod
+    def _fmt_size(n):
+        try:
+            n = int(n or 0)
+        except (TypeError, ValueError):
+            n = 0
+        if n <= 0:
+            return "—"
+        if n < 1024:
+            return "%d B" % n
+        if n < 1024 * 1024:
+            return "%.0f KB" % (n / 1024)
+        return "%.1f MB" % (n / 1024 / 1024)
+
+    @staticmethod
+    def _parse_time(stamp):
+        try:
+            return datetime.strptime(str(stamp or "")[:16], "%Y-%m-%d %H:%M")
+        except ValueError:
+            return None
+
+    def _short_time(self, stamp):
+        dt = self._parse_time(stamp)
+        return dt.strftime("%m-%d %H:%M") if dt else "—"
+
+    @staticmethod
+    def _session_key(it):
+        if "手机端" in str(it.get("severity") or ""):
+            return "来自手机端 · 采用手机识别结果"
+        chemicals = it.get("card_chemicals") or []
+        if chemicals:
+            return "、".join(str(c) for c in chemicals) + "（本地库已核验）"
+        cls = str(it.get("cls") or "")
+        if not cls or cls in ("未检出", "其他"):
+            return "未检出目标 · 可载入继续追问"
+        if str(it.get("mode") or "") == "watch":
+            return "巡检会话 · 可载入继续追问"
+        return "会话含图片副本与问答历史 · 可载入继续追问"
+
+    @staticmethod
+    def _severity_display(raw):
+        raw = str(raw or "").strip()
+        text = raw if raw in ("重", "中", "轻", "无") else "未评估"
+        kind = {"重": "red", "中": "amber", "轻": "green"}.get(text, "grey")
+        return text, kind
+
+    def _chip(self, text, kind, parent):
+        lbl = QLabel(text, parent)
+        lbl.setAlignment(Qt.AlignCenter)
+        bg, fg = self.CHIP_COLORS.get(kind, self.CHIP_COLORS["grey"])
+        lbl.setStyleSheet("background:%s; color:%s; border-radius:999px;"
+                          " padding:2px 9px; font-size:10.5px; font-weight:600;"
+                          % (bg, fg))
+        return lbl
+
+    # ── 筛选与填充 ──
+    def _set_time(self, key):
+        self._time_filter = key
+        self._style_time_chips()
+        self.reload()
+
+    def _style_time_chips(self):
+        for key, btn in self.time_btns.items():
+            if key == self._time_filter:
+                btn.setStyleSheet(
+                    "QPushButton { background:%s; color:%s; border:none;"
+                    " border-radius:14px; padding:0 11px; font-size:11px;"
+                    " font-weight:600; }" % (NAU["primary_light"], NAU["primary"]))
+            else:
+                btn.setStyleSheet(
+                    "QPushButton { background:#F5F6F2; color:%s;"
+                    " border:1px solid %s; border-radius:14px; padding:0 11px;"
+                    " font-size:11px; }" % (NAU["subtext"], NAU["border"]))
+
+    def _in_time(self, stamp):
+        if self._time_filter == "all":
+            return True
+        dt = self._parse_time(stamp)
+        if dt is None:
+            return False
+        days = 7 if self._time_filter == "7" else 30
+        return dt.date() >= (datetime.now().date() - timedelta(days=days - 1))
+
+    def _match_cat(self, cls):
+        sel = self.cat_combo.currentText()
+        if sel == "全部类别":
+            return True
+        cls = str(cls or "")
+        if sel == "未检出/其他":
+            return (not cls) or cls in ("未检出", "其他") or cls not in CLASS_NAMES
+        return cls == sel
+
+    def _query(self):
+        return self.search.text().strip().lower()
+
+    def _match_session(self, it):
+        if not self._in_time(it.get("time")) or not self._match_cat(it.get("cls")):
+            return False
+        q = self._query()
+        if not q:
+            return True
+        return (q in str(it.get("cls") or "").lower()
+                or q in self._session_key(it).lower()
+                or q in str(it.get("id") or "").lower())
+
+    def _match_report(self, it):
+        if not self._in_time(it.get("time")) or not self._match_cat(it.get("cls_name")):
+            return False
+        q = self._query()
+        if not q:
+            return True
+        return (q in os.path.basename(str(it.get("path") or "")).lower()
+                or q in str(it.get("cls_name") or "").lower())
+
+    @staticmethod
+    def _clear_box(layout):
         while layout.count():
             item = layout.takeAt(0)
             w = item.widget()
@@ -16247,107 +16762,109 @@ class ReportInterface(QWidget):
                 w.setParent(None)
                 w.deleteLater()
             elif item.layout() is not None:
-                self._clear_layout(item.layout())
+                ReportInterface._clear_box(item.layout())
+
+    def _fill_sessions(self, sessions):
+        self._clear_box(self.sessions_rows)
+        shown = sessions[:self._page_rows]
+        for it in shown:
+            self.sessions_rows.addWidget(self._session_row(it, self.sessions_page))
+        if not sessions:
+            filtered = (bool(self.search.text().strip()) or self._time_filter != "all"
+                        or self.cat_combo.currentText() != "全部类别")
+            tip = t_body("没有匹配的会话，换个关键词、时间或类别试试。" if filtered else
+                         "还没有会话；完成一次识别或巡检后会自动出现。",
+                         self.sessions_page, muted=True)
+            tip.setAlignment(Qt.AlignCenter)
+            self.sessions_rows.addWidget(tip)
+        self.sessions_rows.addStretch(1)
+        self.sessions_status.setText(
+            "共 %d 条会话 · 显示最近 %d 条 · 会话含图片副本与问答历史"
+            % (len(sessions), len(shown)))
+
+    def _fill_reports(self, reports):
+        self._clear_box(self.reports_rows)
+        shown = reports[:self._page_rows]
+        for it in shown:
+            self.reports_rows.addWidget(self._report_row(it, self.reports_page))
+        if not reports:
+            filtered = (bool(self.search.text().strip()) or self._time_filter != "all"
+                        or self.cat_combo.currentText() != "全部类别")
+            tip = t_body("没有匹配的报告，换个关键词、时间或类别试试。" if filtered else
+                         "还没有导出过报告。在「结果与治理」页点「导出报告」，记录会自动出现在这里。",
+                         self.reports_page, muted=True)
+            tip.setAlignment(Qt.AlignCenter)
+            self.reports_rows.addWidget(tip)
+        self.reports_rows.addStretch(1)
+        self.reports_status.setText(
+            "共 %d 份报告 · 保存在程序目录 reports/ 下 · 移除只删索引，不删文件"
+            % len(reports))
+
+    def _stats_text(self, sessions_all, reports_all):
+        today = datetime.now().date()
+        week = 0
+        for it in sessions_all:
+            dt = self._parse_time(it.get("time"))
+            if dt and dt.date() >= today - timedelta(days=6):
+                week += 1
+        total = 0
+        for it in reports_all:
+            p = str(it.get("path") or "")
+            try:
+                if p and os.path.exists(p):
+                    total += os.path.getsize(p)
+            except OSError:
+                pass
+        latest = reports_all[0].get("time") if reports_all else ""
+        return "本周新增 %d 条 · 报告占用 %s · 最近导出 %s" % (
+            week, self._fmt_size(total) if total else "0 MB", self._short_time(latest))
 
     def reload(self):
-        self._clear()
-        self._add_session_section()          # 先把「历史会话」放上去（Agent 的记忆入口）
-        items = load_report_index()
-        if not items:
-            art = brand_pixmap("主楼剪影_淡金_透明.png", height=120)
-            if art is not None:
-                pic = ImageLabel(self)
-                pic.setPixmap(art)
-                pic.setAlignment(Qt.AlignCenter)
-                self.box.addSpacing(30)
-                self.box.addWidget(pic)
-            tip = t_body("还没有导出过报告。在「结果与治理」页点「导出报告」，记录会自动出现在这里。",
-                         self, muted=True)
-            tip.setAlignment(Qt.AlignCenter)
-            self.box.addWidget(tip)
-            self.box.addStretch()
+        if not hasattr(self, "stack"):
             return
-        for it in items:
-            self.box.addWidget(self._row(it))
-        self.box.addStretch()
+        sessions_all = load_session_index()
+        reports_all = load_report_index()
+        sessions = [it for it in sessions_all if self._match_session(it)]
+        reports = [it for it in reports_all if self._match_report(it)]
+        self.tabs.setItemText("sessions", "历史会话 %d" % len(sessions))
+        self.tabs.setItemText("reports", "报告文件 %d" % len(reports))
+        self.tab_stats.setText(self._stats_text(sessions_all, reports_all))
+        self._fill_sessions(sessions)
+        self._fill_reports(reports)
 
-    def _add_session_section(self):
-        """历史会话：点「继续」可以把那次识别连同问答历史一起载入，接着追问"""
-        sessions = load_session_index()[:8]
-        if not sessions:
-            return
-        self.box.addWidget(t_block("历史会话（可载入继续追问）", self))
-        for it in sessions:
-            card = SimpleCardWidget(self)
-            card.setFixedHeight(64)
-            lay = QHBoxLayout(card)
-            lay.setContentsMargins(12, 8, 12, 8)
-            lay.setSpacing(12)
-            sid = it.get("id", "")
-            col = QVBoxLayout()
-            col.setSpacing(2)
-            col.addWidget(_sized(StrongBodyLabel(
-                "%s　·　%s" % (it.get("cls") or "未识别", it.get("severity") or "—"), card),
-                "body", True))
-            col.addWidget(t_caption("%s　·　问答 %s 轮%s" % (
-                it.get("time", ""), it.get("turns", 0),
-                ("　·　诊断卡药剂 " + "、".join(it.get("card_chemicals") or []))
-                if it.get("card_chemicals") else ""), card, color=NAU["subtext"]))
-            lay.addLayout(col, 1)
-            b = PushButton(FIF.HISTORY, "载入", card)
-            b.clicked.connect(lambda _, s=sid: self.main.load_session(s))
-            lay.addWidget(b)
-            self.box.addWidget(card)
-        self.box.addSpacing(10)
-
-    def _row(self, it):
-        path = it.get("path", "")
-        exists = os.path.exists(path)
-        card = SimpleCardWidget(self)
-        card.setFixedHeight(118)          # 不定高的话卡片会被拉伸得高矮不一
-        lay = QHBoxLayout(card)
-        lay.setContentsMargins(14, 12, 16, 12)
-        lay.setSpacing(16)
-
-        thumb = it.get("thumb") or ""
-        pic = ImageLabel(card)
-        pic.setFixedSize(64, 92)
-        pic.setAlignment(Qt.AlignCenter)
-        if thumb and os.path.exists(thumb):
-            pic.setPixmap(QPixmap(thumb).scaled(64, 92, Qt.KeepAspectRatio,
-                                                Qt.SmoothTransformation))
-        else:
-            pic.setText("PDF" if path.lower().endswith(".pdf") else "—")
-        lay.addWidget(pic)
-
-        col = QVBoxLayout()
-        col.setSpacing(3)
-        col.addWidget(_sized(StrongBodyLabel(it.get("cls_name") or "识别报告", card), "body", True))
-        col.addWidget(t_caption(f"置信度 {it.get('conf', 0) * 100:.1f}%　·　{it.get('time', '')}"
-                                f"　·　{it.get('device', '')}", card, color=NAU["subtext"]))
-        pl = t_caption(path, card, color=NAU["muted"])
-        pl.setWordWrap(True)
-        col.addWidget(pl)
-        col.addStretch()
-        lay.addLayout(col, 1)
-
-        if exists:
-            b_open = PushButton(FIF.VIEW, "打开", card)
-            b_open.clicked.connect(lambda _, p=path: self._open(p))
-            b_dir = PushButton(FIF.FOLDER, "定位", card)
-            b_dir.clicked.connect(lambda _, p=path: self._reveal(p))
-        else:
-            gone = t_caption("文件已被移动或删除", card, color=NAU["red"])
-            lay.addWidget(gone)
-        b_del = PushButton(getattr(FIF, "DELETE", FIF.CANCEL), "移除", card)
-        b_del.clicked.connect(lambda _, p=path: self._forget(p))
-        if exists:
-            lay.addWidget(b_open)
-            lay.addWidget(b_dir)
-        lay.addWidget(b_del)
-        return card
+    def _switch_tab(self, key):
+        self._tab = key
+        self.stack.setCurrentIndex(0 if key == "sessions" else 1)
 
     # ── 操作 ──
+    def _export_sessions(self):
+        items = load_session_index()
+        if not items:
+            InfoBar.warning("没有会话", "还没有可导出的历史会话", duration=3000,
+                            position=InfoBarPosition.TOP, parent=self)
+            return
+        REPORT_DIR.mkdir(parents=True, exist_ok=True)
+        path = REPORT_DIR / ("会话索引_%s.csv" % datetime.now().strftime("%Y%m%d_%H%M%S"))
+        mode_label = {"image": "图片上传", "camera": "摄像头",
+                      "watch": "自动巡检", "phone": "手机同步"}
+        try:
+            with open(path, "w", newline="", encoding="utf-8-sig") as f:
+                w = csv.writer(f)
+                w.writerow(["时间", "识别类别", "置信度", "强度", "问答轮次",
+                            "模式", "诊断卡药剂", "会话编号"])
+                for it in items:
+                    w.writerow([
+                        it.get("time", ""), it.get("cls", ""), it.get("conf", ""),
+                        it.get("severity") or "", it.get("turns", 0),
+                        mode_label.get(str(it.get("mode") or ""), it.get("mode") or ""),
+                        "、".join(it.get("card_chemicals") or []), it.get("id", "")])
+        except OSError as e:
+            InfoBar.error("导出失败", str(e), duration=4000,
+                          position=InfoBarPosition.TOP, parent=self)
+            return
+        InfoBar.success("已导出", os.path.basename(str(path)), duration=4000,
+                        position=InfoBarPosition.TOP, parent=self)
+
     def _open(self, path):
         try:
             os.startfile(path)          # noqa: S606  Windows 默认程序打开
@@ -16383,6 +16900,27 @@ class ReportInterface(QWidget):
     def _forget(self, key):
         """只移除记录，不删文件"""
         save_report_index([x for x in load_report_index() if x.get("path") != key])
+        self.reload()
+
+    # ── 大屏适配 ──
+    def _apply_content_width(self):
+        if not hasattr(self, "root"):
+            return
+        vw = self.scroll.viewport().width() if hasattr(self, "scroll") else self.width()
+        side = max(28, (vw - CONTENT_MAX_WIDTH) // 2)
+        self.root.setContentsMargins(side, 14, side, 6)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply_content_width()
+        n = 10 if self.height() < 950 else 14
+        if self._page_rows != n:
+            self._page_rows = n
+            self.reload()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._apply_content_width()
         self.reload()
 
 
