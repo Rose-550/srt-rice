@@ -169,6 +169,31 @@ check("1120 下自动巡检无横向溢出",
       (content.minimumSizeHint().width(), wi.scroll.viewport().width()))
 wi.grab().save(str(OUT / "watch_1120.png"))
 
+# ── 教学与考核（图片考核工作台）──
+win.switchTo(win.trainInterface)
+QTest.qWait(300)
+ti = win.trainInterface
+check("1120 教学页无横向溢出",
+      ti.scroll.widget().minimumSizeHint().width() <= ti.scroll.viewport().width(),
+      (ti.scroll.widget().minimumSizeHint().width(), ti.scroll.viewport().width()))
+win.resize(1380, 900)
+QTest.qWait(300)
+lw, rw = ti.left_card.width(), ti.right_card.width()
+check("1380 教学页为 45/55 两栏", 0.40 <= lw / max(1, lw + rw) <= 0.50,
+      "left=%d right=%d ratio=%.1f%%" % (lw, rw, lw / max(1, lw + rw) * 100))
+a, b, c = ti.opts[0], ti.opts[1], ti.opts[2]
+check("答题选项为 2×3 字母网格",
+      len(ti.opts) == 7 and len(ti._opt_views) == 6
+      and a.y() == b.y() and c.y() > a.y() and abs(a.x() - c.x()) < 4,
+      (len(ti.opts), a.x(), a.y(), b.x(), b.y(), c.x(), c.y()))
+check("「不确定」占独立一行",
+      ti.btn_unsure.y() > ti.opts[2].y(), (ti.btn_unsure.y(), ti.opts[2].y()))
+check("讲评卡为三段（结论 / 症状 / 防治）",
+      ti.fb_symptom_title.text() == "典型症状"
+      and ti.fb_prevent_title.text() == "防治要点"
+      and not ti.feedback_card.isHidden())
+ti.grab().save(str(OUT / "train_1380.png"))
+
 # ── 1920 全屏（决赛演示基线）──
 win.resize(1920, 1080)
 QTest.qWait(400)
@@ -206,6 +231,15 @@ check("1920 巡检页无横向溢出",
       wi.scroll.widget().minimumSizeHint().width() <= wi.scroll.viewport().width(),
       (wi.scroll.widget().minimumSizeHint().width(), wi.scroll.viewport().width()))
 wi.grab().save(str(OUT / "watch_1920.png"))
+
+win.switchTo(win.trainInterface)
+QTest.qWait(300)
+check("1920 教学页内容限宽居中", ti.root.contentsMargins().left() >= 200,
+      ti.root.contentsMargins().left())
+check("1920 教学页无横向溢出",
+      ti.scroll.widget().minimumSizeHint().width() <= ti.scroll.viewport().width(),
+      (ti.scroll.widget().minimumSizeHint().width(), ti.scroll.viewport().width()))
+ti.grab().save(str(OUT / "train_1920.png"))
 
 win.close()
 print("\n通过 %d 项，失败 %d 项" % (len(PASS), len(FAIL)))

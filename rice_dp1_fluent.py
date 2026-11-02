@@ -14340,31 +14340,63 @@ class TrainInterface(QWidget):
         self.bank_index = 0
         self.case_index = 0
         self.case_hits = []
+        self._quiz_pixmap = None
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(32, 24, 32, 24)
-        root.setSpacing(10)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.scroll = ScrollArea(self)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        content = QWidget(self.scroll)
+        content.setObjectName("trainContent")
+        root = QVBoxLayout(content)
+        root.setContentsMargins(28, 12, 28, 6)
+        root.setSpacing(6)
+        self.root = root
+
+        # ── 页头：标题 + 说明 + 三个操作 ──
         head = QHBoxLayout()
-        head.addWidget(page_title("教学与考核", self))
-        head.addStretch()
-        self.btn_seed = PushButton(FIF.EDUCATION, "用本地库生成题库", self)
-        self.btn_seed.setToolTip("按本地防治库自动出一套题与案例（内容自有，来源标注为本地防治库）")
-        self.btn_seed.clicked.connect(self.seed_from_local)
-        head.addWidget(self.btn_seed)
-        self.btn_import = PushButton(FIF.FOLDER_ADD, "导入资料", self)
-        self.btn_import.setToolTip("导入 PDF / Word / 文本 / CSV / JSON（请使用自有或公开合法资料）")
-        self.btn_import.clicked.connect(self.import_material)
-        head.addWidget(self.btn_import)
-        self.btn_import_url = PushButton(FIF.GLOBE, "从网址导入", self)
-        self.btn_import_url.clicked.connect(self.import_from_url)
-        head.addWidget(self.btn_import_url)
+        head.setSpacing(16)
+        left = QVBoxLayout()
+        left.setSpacing(2)
+        left.addWidget(page_title("教学与考核", self))
+        left.addWidget(t_caption("图片考核 · 题库答题 · 案例学习 · 先自己判断，再看模型与知识库的结论",
+                                 self, color=NAU["muted"]))
+        head.addLayout(left, 1)
+        acts = QHBoxLayout()
+        acts.setSpacing(8)
+        acts.setContentsMargins(0, 8, 0, 0)
+        self.btn_import = DropDownPushButton(FIF.FOLDER_ADD, "导入资料", self)
+        self.btn_import.setFixedHeight(34)
+        imp_menu = RoundMenu(parent=self)
+        self.btn_import_file = Action(FIF.FOLDER_ADD, "从文件导入", self)
+        self.btn_import_file.triggered.connect(self.import_material)
+        imp_menu.addAction(self.btn_import_file)
+        self.btn_import_url = Action(FIF.GLOBE, "从网址导入", self)
+        self.btn_import_url.triggered.connect(self.import_from_url)
+        imp_menu.addAction(self.btn_import_url)
+        self.btn_import.setMenu(imp_menu)
+        acts.addWidget(self.btn_import)
         self.btn_export = PushButton(FIF.SAVE, "导出成绩单", self)
+        self.btn_export.setFixedHeight(34)
         self.btn_export.setEnabled(False)
         self.btn_export.clicked.connect(self.export_sheet)
-        head.addWidget(self.btn_export)
+        acts.addWidget(self.btn_export)
+        more_menu = RoundMenu(parent=self)
+        self.btn_seed = Action(FIF.EDUCATION, "用本地库生成题库", self)
+        self.btn_seed.setToolTip("按本地防治库自动出一套题与案例（内容自有，来源标注为本地防治库）")
+        self.btn_seed.triggered.connect(self.seed_from_local)
+        more_menu.addAction(self.btn_seed)
+        self.btn_more = DropDownPushButton("更多", self)
+        self.btn_more.setFixedHeight(34)
+        self.btn_more.setMenu(more_menu)
+        acts.addWidget(self.btn_more)
+        head.addLayout(acts, 0)
         root.addLayout(head)
 
+        # ── 模式切换行 ──
         mode_row = QHBoxLayout()
+        mode_row.setSpacing(12)
         self.mode_bar = SegmentedWidget(self)
         self.mode_bar.addItem("image", "图片考核", lambda: self._switch_mode("image"))
         self.mode_bar.addItem("bank", "题库答题", lambda: self._switch_mode("bank"))
@@ -14374,51 +14406,211 @@ class TrainInterface(QWidget):
         self.mode_bar.setCurrentItem("image")
         mode_row.addWidget(self.mode_bar)
         mode_row.addStretch()
-        self.lbl_teach = CaptionLabel("", self)
+        self.lbl_teach = t_caption("", self, color=NAU["muted"])
         mode_row.addWidget(self.lbl_teach)
         root.addLayout(mode_row)
+        self.status = t_caption("图片题库 %d 张（来自验证集与样例图）" % len(self.pool),
+                                self, color=NAU["muted"])
+        self.status.setVisible(False)
         self._refresh_teach_status()
-        self.status = CaptionLabel(
-            "图片题库 %d 张（来自验证集与样例图）· 先自己判断，再看模型与知识库"
-            % len(self.pool), self)
-        root.addWidget(self.status)
 
+        # ── 图片考核：左题卡 + 右答题卡 ──
         body = QHBoxLayout()
-        body.setSpacing(12)
-        left = SimpleCardWidget(self)
-        lv = QVBoxLayout(left)
-        lv.setContentsMargins(14, 14, 14, 14)
-        self.img = ImageLabel(left)
-        self.img.setMinimumSize(460, 340)
+        body.setSpacing(14)
+        left_card = SimpleCardWidget(self)
+        lv = QVBoxLayout(left_card)
+        lv.setContentsMargins(14, 10, 14, 6)
+        lv.setSpacing(5)
+        qhead = QHBoxLayout()
+        qhead.setSpacing(8)
+        self.q_index_chip = self._chip("第 — / — 题", "green", left_card)
+        qhead.addWidget(self.q_index_chip)
+        self.q_record_chip = self._chip("✓ 已记录", "grey", left_card)
+        self.q_record_chip.setVisible(False)
+        qhead.addWidget(self.q_record_chip)
+        qhead.addStretch()
+        self.progress = t_caption("图片题库 %d 张" % len(self.pool), left_card,
+                                  color=NAU["muted"])
+        qhead.addWidget(self.progress)
+        lv.addLayout(qhead)
+        self.img = QLabel(left_card)
+        self.img.setMinimumSize(300, 220)
         self.img.setAlignment(Qt.AlignCenter)
+        self.img.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
+        self.img.setStyleSheet("background:transparent; border-radius:6px;")
         self.img.setText("点「开始考核」随机出题")
         lv.addWidget(self.img, 1)
-        self.progress = CaptionLabel("", left)
-        lv.addWidget(self.progress)
-        body.addWidget(left, 5)
+        self.q_text = StrongBodyLabel("请判断图中水稻叶片的病虫害类别", left_card)
+        self.q_text.setFont(ui_font(TYPE["subtitle"] - 2, weight=QFont.DemiBold))
+        lv.addWidget(self.q_text)
+        self.q_tip = t_caption("先自己判断，提交后再对照模型判断与知识库讲解。",
+                               left_card, color=NAU["muted"])
+        lv.addWidget(self.q_tip)
+        qfoot = QHBoxLayout()
+        qfoot.setSpacing(8)
+        self.btn_start = PrimaryPushButton(FIF.PLAY, "开始考核", left_card)
+        self.btn_start.setFixedHeight(32)
+        self.btn_start.clicked.connect(self.start_session)
+        qfoot.addWidget(self.btn_start)
+        self.btn_pool = PushButton(FIF.FOLDER, "换个题库", left_card)
+        self.btn_pool.setFixedHeight(32)
+        self.btn_pool.clicked.connect(self.choose_pool)
+        qfoot.addWidget(self.btn_pool)
+        qfoot.addStretch()
+        lv.addLayout(qfoot)
+        body.addWidget(left_card, 45)
+        self.left_card = left_card
 
-        right = SimpleCardWidget(self)
-        rv = QVBoxLayout(right)
-        rv.setContentsMargins(16, 14, 16, 14)
-        rv.setSpacing(8)
-        rv.addWidget(brand_title("请判断这是什么病虫害", right))
+        right_card = SimpleCardWidget(self)
+        rv = QVBoxLayout(right_card)
+        rv.setContentsMargins(14, 10, 14, 6)
+        rv.setSpacing(5)
+        ahead = QHBoxLayout()
+        a_title = StrongBodyLabel("选择你的判断", right_card)
+        a_title.setFont(ui_font(TYPE["subtitle"] - 2, weight=QFont.DemiBold))
+        ahead.addWidget(a_title)
+        ahead.addStretch()
+        self.a_progress = t_caption("本组进度 — / — · 正确 0", right_card,
+                                    color=NAU["muted"])
+        ahead.addWidget(self.a_progress)
+        rv.addLayout(ahead)
+        opts_grid = QGridLayout()
+        opts_grid.setHorizontalSpacing(8)
+        opts_grid.setVerticalSpacing(8)
+        opts_grid.setColumnStretch(0, 1)
+        opts_grid.setColumnStretch(1, 1)
         self.opts = []
-        for name in CLASS_NAMES:
-            b = PushButton(name, right)
-            b.setMinimumHeight(38)
-            b.clicked.connect(lambda _=None, n=name: self.answer(n))
-            rv.addWidget(b)
-            self.opts.append(b)
-        b_unsure = TransparentPushButton("不确定 / 看不清", right)
-        b_unsure.clicked.connect(lambda: self.answer("不确定"))
-        rv.addWidget(b_unsure)
-        self.opts.append(b_unsure)
-        self.feedback = TextEdit(right)
-        self.feedback.setReadOnly(True)
-        self.feedback.setPlaceholderText("判定后会在这里给出正确答案、模型判断和知识库要点…")
-        rv.addWidget(self.feedback, 1)
-        body.addWidget(right, 4)
-        self.left_card, self.right_card = left, right
+        self._opt_views = []
+        for i, name in enumerate(CLASS_NAMES):
+            btn, key_lbl, name_lbl, mark_lbl = self._make_option(name, i, right_card)
+            btn.clicked.connect(lambda _=None, n=name: self.answer(n))
+            self.opts.append(btn)
+            self._opt_views.append((name, btn, key_lbl, name_lbl, mark_lbl))
+            opts_grid.addWidget(btn, i // 2, i % 2)
+        rv.addLayout(opts_grid)
+        self.btn_unsure = QPushButton("不确定 / 看不清", right_card)
+        self.btn_unsure.setFixedHeight(34)
+        self.btn_unsure.setCursor(Qt.PointingHandCursor)
+        self.btn_unsure.clicked.connect(lambda: self.answer("不确定"))
+        rv.addWidget(self.btn_unsure)
+        self.opts.append(self.btn_unsure)
+        self.a_hint = t_caption("支持键盘 A–F 直接作答；答完后按 Enter 进入下一题。",
+                                right_card, color=NAU["muted"])
+        rv.addWidget(self.a_hint)
+
+        dot_box = QVBoxLayout()
+        dot_box.setSpacing(6)
+        dot_box.addWidget(t_caption("本组进度", right_card, color=NAU["muted"]))
+        dot_row = QHBoxLayout()
+        dot_row.setSpacing(6)
+        self.q_dots = []
+        for i in range(self.SESSION_SIZE):
+            d = QLabel(str(i + 1), right_card)
+            d.setFixedSize(24, 24)
+            d.setAlignment(Qt.AlignCenter)
+            dot_row.addWidget(d)
+            self.q_dots.append(d)
+        dot_row.addStretch()
+        dot_box.addLayout(dot_row)
+        rv.addLayout(dot_box)
+
+        note = QFrame(right_card)
+        note.setStyleSheet("QFrame { background:#F7F8F5; border-radius:6px; }")
+        nl = QHBoxLayout(note)
+        nl.setContentsMargins(10, 6, 10, 6)
+        nl.setSpacing(8)
+        info_ic = QLabel(note)
+        info_ic.setFixedSize(15, 15)
+        info_ic.setPixmap(FIF.INFO.icon(color=QColor(NAU["warning"])).pixmap(15, 15))
+        nl.addWidget(info_ic, 0, Qt.AlignTop)
+        info = t_caption("先自己判断再提交；与模型不一致的地方最值得学习。"
+                         "答错的题自动进入错题本，按 1/3/7 天复习。", note,
+                         color=NAU["subtext"])
+        info.setWordWrap(True)
+        nl.addWidget(info, 1)
+        rv.addWidget(note)
+        rv.addStretch()
+
+        ag = QHBoxLayout()
+        ag.setSpacing(8)
+        t1, self.a_answered = self._quiz_stat_tile(right_card, "已答题", "题")
+        t2, self.a_correct = self._quiz_stat_tile(right_card, "答对", "题")
+        t3, self.a_model_agree = self._quiz_stat_tile(right_card, "与模型一致", "次")
+        for tile in (t1, t2, t3):
+            ag.addWidget(tile, 1)
+        rv.addLayout(ag)
+        body.addWidget(right_card, 55)
+        self.right_card = right_card
+
+        # ── 讲评（全宽三段） ──
+        self.feedback_card = SimpleCardWidget(self)
+        fl = QHBoxLayout(self.feedback_card)
+        fl.setContentsMargins(14, 8, 14, 8)
+        fl.setSpacing(0)
+        col1 = QFrame(self.feedback_card)
+        c1 = QVBoxLayout(col1)
+        c1.setContentsMargins(0, 0, 16, 0)
+        c1.setSpacing(5)
+        fb_head = QHBoxLayout()
+        fb_head.setSpacing(8)
+        self.fb_icon = QLabel("?", col1)
+        self.fb_icon.setFixedSize(20, 20)
+        self.fb_icon.setAlignment(Qt.AlignCenter)
+        fb_head.addWidget(self.fb_icon)
+        self.fb_result = StrongBodyLabel("等待作答", col1)
+        self.fb_result.setFont(ui_font(TYPE["subtitle"] - 3, weight=QFont.Bold))
+        fb_head.addWidget(self.fb_result)
+        fb_head.addStretch()
+        c1.addLayout(fb_head)
+        self.fb_choice = t_body("选择右侧 A–F，或直接点选项提交。", col1,
+                                color=NAU["text"])
+        self.fb_choice.setWordWrap(True)
+        c1.addWidget(self.fb_choice)
+        self.fb_model_chip = self._chip("模型判断 —", "grey", col1)
+        self.fb_model_chip.setVisible(False)
+        c1.addWidget(self.fb_model_chip, 0, Qt.AlignLeft)
+        self.btn_next_q = PushButton("下一题", col1)
+        self.btn_next_q.setFixedHeight(30)
+        self.btn_next_q.clicked.connect(self._next_question)
+        self.btn_next_q.setVisible(False)
+        c1.addWidget(self.btn_next_q, 0, Qt.AlignLeft)
+        c1.addStretch()
+        fl.addWidget(col1, 10)
+
+        col2 = QFrame(self.feedback_card)
+        col2.setStyleSheet("QFrame { border-left:1px solid %s; }" % NAU["divider"])
+        c2 = QVBoxLayout(col2)
+        c2.setContentsMargins(16, 0, 16, 0)
+        c2.setSpacing(5)
+        self.fb_symptom_title = StrongBodyLabel("典型症状", col2)
+        self.fb_symptom_title.setFont(ui_font(TYPE["body"], weight=QFont.DemiBold))
+        c2.addWidget(self.fb_symptom_title)
+        self.fb_symptom = t_body("提交后显示本地防治库的症状要点。", col2,
+                                 color=NAU["text"])
+        self.fb_symptom.setWordWrap(True)
+        c2.addWidget(self.fb_symptom)
+        c2.addStretch()
+        fl.addWidget(col2, 11)
+
+        col3 = QFrame(self.feedback_card)
+        col3.setStyleSheet("QFrame { border-left:1px solid %s; }" % NAU["divider"])
+        c3 = QVBoxLayout(col3)
+        c3.setContentsMargins(16, 0, 0, 0)
+        c3.setSpacing(5)
+        self.fb_prevent_title = StrongBodyLabel("防治要点", col3)
+        self.fb_prevent_title.setFont(ui_font(TYPE["body"], weight=QFont.DemiBold))
+        c3.addWidget(self.fb_prevent_title)
+        self.fb_threshold = t_body("提交后显示防治指标。", col3, color=NAU["text"])
+        self.fb_threshold.setWordWrap(True)
+        c3.addWidget(self.fb_threshold)
+        self.fb_agri = t_body("提交后显示农业防治要点。", col3, color=NAU["text"])
+        self.fb_agri.setWordWrap(True)
+        c3.addWidget(self.fb_agri)
+        self.fb_source = t_caption("知识来源：本地防治库 · 逐条可追溯", col3,
+                                   color=NAU["muted"])
+        c3.addWidget(self.fb_source)
+        c3.addStretch()
+        fl.addWidget(col3, 12)
 
         # ── 题库答题面板 ──
         self.bank_card = SimpleCardWidget(self)
@@ -14535,26 +14727,44 @@ class TrainInterface(QWidget):
         self.review_card.setVisible(False)
         self.wrong_card.setVisible(False)
         root.addLayout(body, 1)
+        root.addWidget(self.feedback_card)
 
-        row = QHBoxLayout()
-        self.btn_start = PrimaryPushButton(FIF.EDUCATION, "开始考核", self)
-        self.btn_start.setMinimumHeight(42)
-        self.btn_start.clicked.connect(self.start_session)
-        row.addWidget(self.btn_start)
-        self.btn_pool = PushButton(FIF.FOLDER, "换个题库", self)
-        self.btn_pool.setMinimumHeight(42)
-        self.btn_pool.clicked.connect(self.choose_pool)
-        row.addWidget(self.btn_pool)
-        row.addStretch()
-        root.addLayout(row)
+        foot = QHBoxLayout()
+        foot.setContentsMargins(2, 2, 2, 0)
+        foot.addWidget(t_caption("稻视界 · 南京农业大学 · 诚朴勤仁", self,
+                                 color=NAU["muted"]))
+        foot.addStretch()
+        foot.addWidget(t_caption("答题记录已保存 · 答错的题自动进入错题本，按 1 / 3 / 7 天复习",
+                                 self, color=NAU["muted"]))
+        root.addLayout(foot)
+
+        self.scroll.setWidget(content)
+        outer.addWidget(self.scroll)
+
+        self._reset_options(styled_disabled=True)
         self._set_options_enabled(False)
+        self._refresh_quiz_dots()
+        self._reset_feedback()
+
+        self._key_shortcuts = []
+        for i, key in enumerate("ABCDEF"):
+            sc = QShortcut(QKeySequence(key), self)
+            sc.activated.connect(lambda idx=i: self._key_answer(idx))
+            self._key_shortcuts.append(sc)
+        for key in (Qt.Key_Return, Qt.Key_Enter):
+            sc = QShortcut(QKeySequence(key), self)
+            sc.activated.connect(self._on_enter)
+            self._key_shortcuts.append(sc)
 
     # ── 模式切换 ──
     def _switch_mode(self, mode):
+        if self.mode_bar.currentRouteKey() != mode:
+            self.mode_bar.setCurrentItem(mode)
         self.mode = mode
         is_img = (mode == "image")
         self.left_card.setVisible(is_img)
         self.right_card.setVisible(is_img)
+        self.feedback_card.setVisible(is_img)
         self.bank_card.setVisible(mode == "bank")
         self.case_card.setVisible(mode == "case")
         self.review_card.setVisible(mode == "review")
@@ -14576,10 +14786,290 @@ class TrainInterface(QWidget):
     def _refresh_teach_status(self):
         st = teaching_stats()
         rv = st.get("错题本", {})
-        self.lbl_teach.setText(
-            "题库 %d 题（待复核 %d）　·　案例 %d 条　·　错题 %d（今日到期 %d）　·　导入 %d 次"
-            % (st["题库"], st.get("待复核", 0), st["案例"], rv.get("错题数", 0),
-               rv.get("今日到期", 0), st["导入次数"]))
+        self.lbl_teach.setText("题库 %d 题 · 案例 %d 条 · 今日到期 %d"
+                               % (st["题库"], st["案例"], rv.get("今日到期", 0)))
+        self.mode_bar.setItemText("review", "题目复核 %d" % st.get("待复核", 0))
+        self.mode_bar.setItemText("wrong", "错题本 %d" % rv.get("错题数", 0))
+
+    # ── 图片考核：小部件与状态 ──
+    CHIP_COLORS = {
+        "green": (NAU["primary_light"], NAU["primary"]),
+        "amber": ("#FCF3E6", "#B77422"),
+        "red": ("#FBEAE7", NAU["red"]),
+        "grey": ("#F1F2EE", NAU["muted"]),
+    }
+
+    def _chip(self, text, kind, parent):
+        lbl = QLabel(text, parent)
+        lbl.setAlignment(Qt.AlignCenter)
+        self._set_chip(lbl, text, kind)
+        return lbl
+
+    def _set_chip(self, lbl, text, kind="grey"):
+        bg, fg = self.CHIP_COLORS.get(kind, self.CHIP_COLORS["grey"])
+        lbl.setText(text)
+        lbl.setStyleSheet("background:%s; color:%s; border-radius:999px;"
+                          "padding:2px 9px; font-size:10.5px; font-weight:600;"
+                          % (bg, fg))
+
+    def _quiz_stat_tile(self, parent, label, unit):
+        tile = QFrame(parent)
+        tile.setFixedHeight(40)
+        tile.setStyleSheet("QFrame { background:#F8F9F5; border-radius:6px; }")
+        h = QHBoxLayout(tile)
+        h.setContentsMargins(10, 3, 10, 3)
+        h.setSpacing(4)
+        k = CaptionLabel(label, tile)
+        k.setTextColor(NAU["muted"], NAU["muted"])
+        h.addWidget(k)
+        h.addStretch()
+        v = QLabel("0", tile)
+        v.setFont(ui_font(TYPE["body"] + 3, weight=QFont.DemiBold))
+        v.setStyleSheet("color:%s; background:transparent;" % NAU["dark"])
+        h.addWidget(v)
+        u = CaptionLabel(unit, tile)
+        u.setTextColor(NAU["muted"], NAU["muted"])
+        h.addWidget(u, 0, Qt.AlignBottom)
+        return tile, v
+
+    def _make_option(self, name, idx, parent):
+        btn = QPushButton(parent)
+        btn.setFixedHeight(44)
+        btn.setCursor(Qt.PointingHandCursor)
+        h = QHBoxLayout(btn)
+        h.setContentsMargins(12, 0, 12, 0)
+        h.setSpacing(10)
+        key = QLabel("ABCDEF"[idx], btn)
+        key.setFixedSize(20, 20)
+        key.setAlignment(Qt.AlignCenter)
+        key.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        h.addWidget(key)
+        lbl = QLabel(name, btn)
+        lbl.setFont(ui_font(TYPE["body"] + 1))
+        lbl.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        h.addWidget(lbl)
+        h.addStretch()
+        mark = QLabel("", btn)
+        mark.setFixedWidth(20)
+        mark.setAlignment(Qt.AlignCenter)
+        mark.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        h.addWidget(mark)
+        return btn, key, lbl, mark
+
+    def _style_option(self, name, state):
+        for opt_name, btn, key, lbl, mark in self._opt_views:
+            if opt_name != name:
+                continue
+            if state == "correct":
+                btn.setStyleSheet("QPushButton { background:#F4FAF6;"
+                                  " border:2px solid %s; border-radius:6px; }"
+                                  % NAU["primary"])
+                key.setStyleSheet("background:%s; color:%s; border-radius:4px;"
+                                  " font-size:10.5px; font-weight:700;"
+                                  % (NAU["primary_light"], NAU["primary"]))
+                lbl.setStyleSheet("color:%s; background:transparent;" % NAU["dark"])
+                mark.setText("✓")
+                mark.setStyleSheet("color:%s; background:transparent;"
+                                   " font-size:13px; font-weight:700;" % NAU["primary"])
+            elif state == "wrong":
+                btn.setStyleSheet("QPushButton { background:#FDF6F5;"
+                                  " border:2px solid %s; border-radius:6px; }"
+                                  % NAU["red"])
+                key.setStyleSheet("background:#FBEAE7; color:%s; border-radius:4px;"
+                                  " font-size:10.5px; font-weight:700;" % NAU["red"])
+                lbl.setStyleSheet("color:%s; background:transparent;" % NAU["dark"])
+                mark.setText("✗")
+                mark.setStyleSheet("color:%s; background:transparent;"
+                                   " font-size:13px; font-weight:700;" % NAU["red"])
+            elif state == "disabled":
+                btn.setStyleSheet("QPushButton { background:#F7F8F5;"
+                                  " border:1px solid %s; border-radius:6px; }"
+                                  % NAU["border"])
+                key.setStyleSheet("background:#F1F2EE; color:%s; border-radius:4px;"
+                                  " font-size:10.5px; font-weight:700;" % NAU["muted"])
+                lbl.setStyleSheet("color:%s; background:transparent;" % NAU["muted"])
+                mark.setText("")
+            else:
+                btn.setStyleSheet("QPushButton { background:#FFFFFF;"
+                                  " border:1px solid #DADFD7; border-radius:6px; }")
+                key.setStyleSheet("background:#F1F2EE; color:%s; border-radius:4px;"
+                                  " font-size:10.5px; font-weight:700;" % NAU["muted"])
+                lbl.setStyleSheet("color:%s; background:transparent;" % NAU["text"])
+                mark.setText("")
+            return
+
+    def _reset_options(self, styled_disabled=False):
+        for name, btn, key, lbl, mark in self._opt_views:
+            self._style_option(name, "disabled" if styled_disabled else "normal")
+
+    def _mark_options(self, choice, truth):
+        for name, btn, key, lbl, mark in self._opt_views:
+            if name == truth:
+                self._style_option(name, "correct")
+            elif name == choice:
+                self._style_option(name, "wrong")
+            else:
+                self._style_option(name, "normal")
+
+    def _style_unsure(self, enabled):
+        if enabled:
+            self.btn_unsure.setStyleSheet(
+                "QPushButton { background:#FAFBF8; border:1px dashed #CFD6CE;"
+                " border-radius:6px; color:%s; font-size:12px; }" % NAU["muted"])
+        else:
+            self.btn_unsure.setStyleSheet(
+                "QPushButton { background:#F7F8F5; border:1px dashed %s;"
+                " border-radius:6px; color:%s; font-size:12px; }"
+                % (NAU["border"], NAU["muted"]))
+
+    def _set_fb_icon(self, symbol, kind):
+        bg, fg = self.CHIP_COLORS.get(kind, self.CHIP_COLORS["grey"])
+        self.fb_icon.setText(symbol)
+        self.fb_icon.setStyleSheet("background:%s; color:%s; border-radius:10px;"
+                                   " font-size:11px; font-weight:700;" % (bg, fg))
+
+    def _reset_feedback(self):
+        self._set_fb_icon("?", "grey")
+        self.fb_result.setText("等待作答")
+        self.fb_result.setTextColor(NAU["muted"], NAU["muted"])
+        self.fb_choice.setText("选择右侧 A–F，或直接点选项提交。")
+        self.fb_choice.setTextColor(NAU["subtext"], NAU["subtext"])
+        self.fb_model_chip.setVisible(False)
+        self.fb_symptom_title.setText("典型症状")
+        self.fb_prevent_title.setText("防治要点")
+        self.fb_symptom.setText("提交后显示本地防治库的症状要点。")
+        self.fb_threshold.setText("提交后显示防治指标。")
+        self.fb_agri.setText("提交后显示农业防治要点。")
+        self.fb_source.setText("知识来源：本地防治库 · 逐条可追溯")
+        self.btn_next_q.setVisible(False)
+
+    def _show_feedback(self, choice, truth, correct, guess, conf, model_correct, tr):
+        if choice == "不确定":
+            kind, symbol, title = "amber", "?", "不确定"
+        elif correct:
+            kind, symbol, title = "green", "✓", "答对了"
+        else:
+            kind, symbol, title = "red", "✕", "答错了"
+        self._set_fb_icon(symbol, kind)
+        self.fb_result.setText(title)
+        self.fb_result.setTextColor(self.CHIP_COLORS[kind][1], self.CHIP_COLORS[kind][1])
+        self.fb_choice.setText("你选的是「%s」，正确答案是「%s」。" % (choice, truth))
+        self.fb_choice.setTextColor(NAU["text"], NAU["text"])
+        self._set_chip(self.fb_model_chip,
+                       "模型判断 %s %.0f%% · %s"
+                       % (guess, conf * 100, "与答案一致" if model_correct else "与答案不一致"),
+                       "green" if model_correct else "amber")
+        self.fb_model_chip.setVisible(True)
+        self.fb_symptom_title.setText("典型症状")
+        self.fb_prevent_title.setText("防治要点")
+        self.fb_symptom.setText(tr.get("symptom") or "本地防治库暂无")
+        self.fb_threshold.setText("指标　%s" % (tr.get("threshold") or "本地防治库暂无"))
+        agri = (tr.get("agri") or [""])[0] or "本地防治库暂无"
+        self.fb_agri.setText("农业防治　%s" % agri)
+        self.fb_source.setText("知识来源：本地防治库 · 逐条可追溯")
+        self.btn_next_q.setText("下一题" if self.index + 1 < len(self.session) else "查看成绩")
+        self.btn_next_q.setVisible(True)
+
+    def _show_summary_feedback(self, s):
+        self._set_fb_icon("✓", "green")
+        self.fb_result.setText("本轮完成")
+        self.fb_result.setTextColor(NAU["primary"], NAU["primary"])
+        self.fb_choice.setText("共 %s 题 · 人的正确率 %s%% · 模型正确率 %s%%"
+                               % (s.get("题数"), s.get("人的正确率"),
+                                  s.get("模型正确率")))
+        self.fb_choice.setTextColor(NAU["text"], NAU["text"])
+        self.fb_model_chip.setVisible(False)
+        self.fb_symptom_title.setText("错题类别")
+        self.fb_prevent_title.setText("教学提示")
+        wrong = s.get("错题类别") or {}
+        self.fb_symptom.setText("、".join("%s %d 题" % (k, v) for k, v in wrong.items())
+                                if wrong else "无")
+        self.fb_threshold.setText("人和模型都错：%s 题" % s.get("人机都错", 0))
+        self.fb_agri.setText("模型与人都错的那几类，正是最需要补数据/补实训的方向。")
+        self.fb_source.setText("答题记录已保存 · 可导出成绩单")
+        self.btn_next_q.setVisible(False)
+
+    def _refresh_quiz_stats(self):
+        n = len(self.session)
+        answered = len(self.records)
+        correct = sum(1 for r in self.records if r.get("correct"))
+        agree = sum(1 for r in self.records if r.get("model_correct") is True)
+        self.a_answered.setText(str(answered))
+        self.a_correct.setText(str(correct))
+        self.a_model_agree.setText(str(agree))
+        if n:
+            self.a_progress.setText("本组进度 %d / %d · 正确 %d"
+                                    % (min(self.index + 1, n), n, correct))
+        else:
+            self.a_progress.setText("本组进度 — / — · 正确 0")
+
+    def _refresh_quiz_dots(self):
+        n = len(self.session)
+        for i, d in enumerate(self.q_dots):
+            if i >= n:
+                state = "grey"
+            elif i < len(self.records):
+                state = "green" if self.records[i].get("correct") else "red"
+            elif i == self.index and not self._answered:
+                state = "current"
+            else:
+                state = "grey"
+            if state == "current":
+                d.setStyleSheet("background:#FFFFFF; border:2px solid %s;"
+                                " border-radius:12px; color:%s; font-size:10.5px;"
+                                " font-weight:600;" % (NAU["primary"], NAU["primary"]))
+            else:
+                bg, fg = {"green": (NAU["primary_light"], NAU["primary"]),
+                          "red": ("#FBEAE7", NAU["red"]),
+                          "grey": ("#F1F2EE", NAU["muted"])}[state]
+                d.setStyleSheet("background:%s; color:%s; border:none;"
+                                " border-radius:12px; font-size:10.5px;"
+                                " font-weight:600;" % (bg, fg))
+
+    def _fit_quiz_image(self):
+        if not hasattr(self, "img"):
+            return
+        pix = getattr(self, "_quiz_pixmap", None)
+        if pix is None or pix.isNull():
+            return
+        max_h = 340 if self.height() >= 950 else 280
+        w, h = self.img.width(), self.img.height()
+        if w < 60 or h < 60:
+            w, h = 440, max_h
+        scaled = pix.scaled(max(240, w - 4), min(max_h, max(180, h - 4)),
+                            Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.img.setPixmap(scaled)
+
+    def _apply_content_width(self):
+        """大屏把内容限宽 1280 居中"""
+        if not hasattr(self, "root"):
+            return
+        vw = self.scroll.viewport().width() if hasattr(self, "scroll") else self.width()
+        side = max(28, (vw - CONTENT_MAX_WIDTH) // 2)
+        self.root.setContentsMargins(side, 12, side, 6)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply_content_width()
+        self._fit_quiz_image()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._apply_content_width()
+        self._fit_quiz_image()
+
+    def _key_answer(self, idx):
+        if (self.mode != "image" or not self.isVisible() or self._answered
+                or not self.current or idx >= len(CLASS_NAMES)
+                or idx >= len(self.opts) or not self.opts[idx].isEnabled()):
+            return
+        self.answer(CLASS_NAMES[idx])
+
+    def _on_enter(self):
+        if self.mode != "image" or not self.isVisible():
+            return
+        if self._answered:
+            self._next_question()
 
     # ── 题库答题 ──
     def _start_bank_quiz(self):
@@ -14876,6 +15366,7 @@ class TrainInterface(QWidget):
     def _set_options_enabled(self, on):
         for b in self.opts:
             b.setEnabled(on)
+        self._style_unsure(on)
 
     def choose_pool(self):
         d = QFileDialog.getExistingDirectory(self, "选择题库文件夹（文件名需以类别英文名开头）")
@@ -14883,6 +15374,9 @@ class TrainInterface(QWidget):
             return
         self.pool = collect_question_pool([d])
         self.status.setText("题库 %d 张（来自 %s）" % (len(self.pool), os.path.basename(d)))
+        if not self.session:
+            self.progress.setText("题库 %d 张（来自 %s）"
+                                  % (len(self.pool), os.path.basename(d)))
 
     def start_session(self):
         if not self.pool:
@@ -14894,6 +15388,7 @@ class TrainInterface(QWidget):
         self.session = random.sample(self.pool, n)
         self.records = []
         self.index = 0
+        self.current = None
         self.btn_export.setEnabled(False)
         self.btn_start.setText("重新开始")
         log_event("training_start", questions=n, pool=len(self.pool))
@@ -14907,13 +15402,18 @@ class TrainInterface(QWidget):
         if img is None:
             self._next_question()
             return
-        self.img.setPixmap(bgr_to_qpixmap(img).scaled(
-            440, 330, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        self.progress.setText("第 %d / %d 题　·　来源：%s"
-                              % (self.index + 1, len(self.session), self.current["source"]))
-        self.feedback.setPlainText("")
-        self._q_t0 = datetime.now()
+        self._quiz_pixmap = bgr_to_qpixmap(img)
+        self._fit_quiz_image()
+        n = len(self.session)
+        self.q_index_chip.setText("第 %d / %d 题" % (self.index + 1, n))
+        self.q_record_chip.setVisible(False)
+        self.progress.setText("来源：%s" % self.current["source"])
+        self._reset_options()
         self._set_options_enabled(True)
+        self._reset_feedback()
+        self._refresh_quiz_stats()
+        self._refresh_quiz_dots()
+        self._q_t0 = datetime.now()
         # 模型判断在后台算，判定后才展示，避免先看答案
         self.thread = _track_thread(InferenceThread(self.main.model, img))
         self.thread.result_ready.connect(self._on_model_result)
@@ -14946,18 +15446,11 @@ class TrainInterface(QWidget):
                   seconds=round(seconds, 1), model=guess, model_correct=model_correct)
 
         tr = TREATMENT_DB.get(truth, {})
-        parts = ["%s 你选的是「%s」，正确答案是「%s」" % ("✅ 答对了。" if correct else "❌ 答错了。",
-                                                        choice, truth),
-                 "模型判断：%s（%.0f%%）%s" % (guess, conf * 100,
-                                              "，与正确答案一致" if model_correct else "，同样判断错误"),
-                 "典型症状：%s" % tr.get("symptom", "（本地库暂无）"),
-                 "防治指标：%s" % tr.get("threshold", "（本地库暂无）")]
-        if tr.get("agri"):
-            parts.append("农业防治要点：" + "；".join(tr["agri"][:2]))
-        self.feedback.setPlainText("\n\n".join(parts))
-        InfoBar.success("已记录", "第 %d/%d 题" % (self.index + 1, len(self.session)),
-                        duration=1200, position=InfoBarPosition.TOP, parent=self)
-        QTimer.singleShot(700, self._next_question)
+        self._mark_options(choice, truth)
+        self.q_record_chip.setVisible(True)
+        self._show_feedback(choice, truth, correct, guess, conf, model_correct, tr)
+        self._refresh_quiz_stats()
+        self._refresh_quiz_dots()
 
     def _next_question(self):
         if self.index + 1 < len(self.session):
@@ -14970,13 +15463,9 @@ class TrainInterface(QWidget):
         self._set_options_enabled(False)
         s = training_summary(self.records)
         self.progress.setText("本轮结束：共 %d 题" % s.get("题数", 0))
-        self.feedback.setPlainText(
-            "本轮成绩单\n\n"
-            "题数：%s\n人的正确率：%s%%\n模型正确率：%s%%\n平均用时：%s 秒\n"
-            "错题类别：%s\n人和模型都错：%s 题\n\n"
-            "教学提示：模型与人都错的那几类，正是最需要补数据/补实训的方向。"
-            % (s.get("题数"), s.get("人的正确率"), s.get("模型正确率"), s.get("平均用时秒"),
-               s.get("错题类别") or "无", s.get("人机都错")))
+        self.q_index_chip.setText("本轮完成")
+        self._show_summary_feedback(s)
+        self._refresh_quiz_stats()
         self.btn_export.setEnabled(True)
         log_event("training_finish", **{k: v for k, v in s.items() if k != "错题类别"})
         InfoBar.success("本轮完成", "正确率 %s%%" % s.get("人的正确率"),
