@@ -10780,8 +10780,8 @@ class WatchInterface(QWidget):
 
     def _on_once_finished(self, n):
         self._load_recent_rows()
-        self._set_monitor_state("idle", "处理完成 · 本次共 %d 张" % n)
         self.refresh_candidates()
+        self._set_monitor_state("idle", "处理完成 · 本次共 %d 张" % n)
 
     def _on_watch_failed(self, msg):
         self.monitor_note.setText("巡检异常：%s" % msg)
