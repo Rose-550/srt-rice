@@ -6440,7 +6440,7 @@ class HomeInterface(QWidget):
         col = getattr(self, "right_col", None)
         if col is None:
             return
-        w = 420 if self.width() >= 1500 else 376
+        w = 420 if self.width() >= 1500 else (376 if self.width() >= 1050 else 340)
         if getattr(self, "_right_col_w", None) != w:
             self._right_col_w = w
             col.setFixedWidth(w)
@@ -14084,8 +14084,9 @@ class MapInterface(QWidget):
         foot.addWidget(t_caption("稻视界 · 南京农业大学 · 诚朴勤仁", self,
                                  color=NAU["muted"]))
         foot.addStretch()
-        foot.addWidget(t_caption("点位数据本地存储 · 地图底图高德（本地缓存）· "
-                                 "施药窗口来自地块坐标天气", self, color=NAU["muted"]))
+        self.lbl_foot_note = t_caption("点位数据本地存储 · 地图底图高德（本地缓存）· "
+                                       "施药窗口来自地块坐标天气", self, color=NAU["muted"])
+        foot.addWidget(self.lbl_foot_note)
         return foot
 
     # ── 风险等级 / 小部件 ──
@@ -14185,6 +14186,8 @@ class MapInterface(QWidget):
         vw = self.scroll.viewport().width() if hasattr(self, "scroll") else self.width()
         side = max(28, (vw - CONTENT_MAX_WIDTH) // 2)
         self.root.setContentsMargins(side, 14, side, 6)
+        if hasattr(self, "lbl_foot_note"):
+            self.lbl_foot_note.setVisible(self.width() >= 1050)
 
     def _reflow_right_col(self):
         col = getattr(self, "right_col", None)
@@ -15593,7 +15596,7 @@ class TrainInterface(QWidget):
         left = QVBoxLayout()
         left.setSpacing(2)
         left.addWidget(page_title("教学与考核", self))
-        left.addWidget(t_caption("图片考核 · 题库答题 · 案例学习 · 先自己判断，再看模型与知识库的结论",
+        left.addWidget(t_caption("图片考核 · 题库答题 · 案例学习 · 先判断再看结论",
                                  self, color=NAU["muted"]))
         head.addLayout(left, 1)
         acts = QHBoxLayout()
@@ -15675,9 +15678,11 @@ class TrainInterface(QWidget):
         lv.addWidget(self.img, 1)
         self.q_text = StrongBodyLabel("请判断图中水稻叶片的病虫害类别", left_card)
         self.q_text.setFont(ui_font(TYPE["subtitle"] - 2, weight=QFont.DemiBold))
+        self.q_text.setWordWrap(True)
         lv.addWidget(self.q_text)
         self.q_tip = t_caption("先自己判断，提交后再对照模型判断与知识库讲解。",
                                left_card, color=NAU["muted"])
+        self.q_tip.setWordWrap(True)
         lv.addWidget(self.q_tip)
         qfoot = QHBoxLayout()
         qfoot.setSpacing(8)
@@ -15729,6 +15734,7 @@ class TrainInterface(QWidget):
         self.opts.append(self.btn_unsure)
         self.a_hint = t_caption("支持键盘 A–F 直接作答；答完后按 Enter 进入下一题。",
                                 right_card, color=NAU["muted"])
+        self.a_hint.setWordWrap(True)
         rv.addWidget(self.a_hint)
 
         dot_box = QVBoxLayout()
@@ -16912,7 +16918,7 @@ class SettingInterface(QWidget):
         lab = QLabel(label, parent)
         lab.setFont(ui_font(TYPE["body"]))
         lab.setStyleSheet("color:%s; background:transparent;" % NAU["muted"])
-        lab.setFixedWidth(116)
+        lab.setFixedWidth(110)
         row.addWidget(lab)
         row.addWidget(widget, stretch)
         if chip is not None:
@@ -18744,7 +18750,7 @@ class ScienceInterface(QWidget):
 
         tr = TREATMENT_DB.get(name) or {}
         drugs = tr.get("drugs") or []
-        self._set_chip(self.chip_drugs, "本地库·%d 种" % len(drugs), "green")
+        self._set_chip(self.chip_drugs, "药剂 %d 种" % len(drugs), "green")
         self.chip_drugs.setToolTip("本地防治库收录 %d 种已登记药剂" % len(drugs))
         self.lbl_sym.setText(tr.get("symptom") or desc)
 
@@ -18825,6 +18831,8 @@ class ScienceInterface(QWidget):
         vw = self.scroll.viewport().width() if hasattr(self, "scroll") else self.width()
         side = max(28, (vw - CONTENT_MAX_WIDTH) // 2)
         self.root.setContentsMargins(side, 10, side, 6)
+        if hasattr(self, "lbl_stage_sub"):
+            self.lbl_stage_sub.setVisible(self.width() >= 1050)
 
     def _reflow_right_col(self):
         col = getattr(self, "right_col", None)

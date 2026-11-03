@@ -83,6 +83,8 @@ check("1120 最小窗口下左栏仍约占 35%", 0.30 <= ratio_l <= 0.40,
       "left=%d right=%d ratio=%.1f%%" % (lw, rw, ratio_l * 100))
 
 # ── 首页布局 ──
+win.resize(1380, 900)
+QTest.qWait(300)
 win.switchTo(win.homeInterface)
 QTest.qWait(400)
 home = win.homeInterface
@@ -95,9 +97,13 @@ wc, rc = home.weather_card.width(), home.right_col.width()
 check("首页右栏固定约 376", 360 <= rc <= 392, rc)
 check("首页天气卡占剩余宽度", wc > rc, (wc, rc))
 check("今日概况已填充", home.today_detect.text().endswith("次"), home.today_detect.text())
+win.resize(1120, 720)
+QTest.qWait(300)
 check("1120 下首页无横向溢出",
       home.scroll.widget().minimumSizeHint().width() <= home.scroll.viewport().width(),
       (home.scroll.widget().minimumSizeHint().width(), home.scroll.viewport().width()))
+check("1120 窄窗首页右栏收至 340", home.right_col.width() == 340,
+      home.right_col.width())
 
 # 注入一份合成天气，验证「有数据时」长文本也不把页面撑宽
 fake_wx = {"地点": "南京", "坐标": [118.78, 32.06],
@@ -182,6 +188,9 @@ train = win.trainInterface
 check("1120 教学页无横向溢出",
       train.scroll.widget().minimumSizeHint().width() <= train.scroll.viewport().width(),
       (train.scroll.widget().minimumSizeHint().width(), train.scroll.viewport().width()))
+check("1120 教学页长提示可换行",
+      train.q_text.wordWrap() and train.q_tip.wordWrap() and train.a_hint.wordWrap(),
+      (train.q_text.wordWrap(), train.q_tip.wordWrap(), train.a_hint.wordWrap()))
 win.resize(1380, 900)
 QTest.qWait(300)
 lw, rw = train.left_card.width(), train.right_card.width()
@@ -281,6 +290,8 @@ QTest.qWait(300)
 check("1120 地图页无横向溢出",
       mi.scroll.widget().minimumSizeHint().width() <= mi.scroll.viewport().width(),
       (mi.scroll.widget().minimumSizeHint().width(), mi.scroll.viewport().width()))
+check("1120 地图页脚说明窄窗隐藏", not mi.lbl_foot_note.isVisible(),
+      mi.lbl_foot_note.isVisible())
 
 # ── 病害科普 ──
 win.resize(1380, 900)
@@ -303,7 +314,7 @@ check("科普页默认选中稻纵卷叶螟",
 check("科普页详情卡已填充",
       si.lbl_name.text() == "稻纵卷叶螟"
       and si.chip_type.text() == "虫害"
-      and si.chip_drugs.text().startswith("本地库·")
+      and si.chip_drugs.text().startswith("药剂")
       and bool(si.lbl_sym.text()) and all(r.text() for r in si.f_rows)
       and "百丛" in si.lbl_thresh.text(),
       (si.lbl_name.text(), si.chip_type.text(), si.chip_drugs.text(),
@@ -346,6 +357,8 @@ QTest.qWait(300)
 check("1120 科普页无横向溢出",
       si.scroll.widget().minimumSizeHint().width() <= si.scroll.viewport().width(),
       (si.scroll.widget().minimumSizeHint().width(), si.scroll.viewport().width()))
+check("1120 科普页卡片副标题收起", not si.lbl_stage_sub.isVisible(),
+      si.lbl_stage_sub.isVisible())
 
 # ── 防治库维护 ──
 win.resize(1380, 900)
@@ -497,6 +510,8 @@ QTest.qWait(300)
 check("1120 设置页无横向溢出",
       se.scroll.widget().minimumSizeHint().width() <= se.scroll.viewport().width(),
       (se.scroll.widget().minimumSizeHint().width(), se.scroll.viewport().width()))
+check("1120 窄窗设置右栏收至 340", se.right_col.width() == 340,
+      se.right_col.width())
 
 # ── 1920 全屏（决赛演示基线）──
 win.resize(1920, 1080)
