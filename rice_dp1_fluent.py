@@ -4427,7 +4427,7 @@ AI_HEADING_ICONS = [
 # 配置文件放在可写目录（打包后为 exe 同级），避免写进只读的临时解压目录
 CONFIG_PATH = str(APP_DIR / "config.json")
 # 桌面程序标配：记住窗口大小/位置；版本号用于"关于"对话框
-APP_VERSION = "3.10.0"  # 3.10：手动标记（右键改病状/删除）+ 最优施药路线 + 批次历史（可回退/恢复）
+APP_VERSION = "3.11.0"  # 3.11：全量 UI 改造（10 个批次）完成；1120 窄窗回归修复；素材截图重拍
 SETTINGS = QSettings(str(APP_DIR / "settings.ini"), QSettings.IniFormat)
 DEFAULT_CONFIG = {
     # 云边联动：小程序跨网络时用得上——小程序传公网中转，电脑端主动拉（不需要公网 IP）
