@@ -14933,29 +14933,6 @@ class AuditDialog(MessageBoxBase):
             box.setMinimumWidth(560)
 
 
-class _ElidedLabel(QLabel):
-    """单行省略标签：列表里的长药名不挤掉右侧「内置 / 我的」标识"""
-
-    def __init__(self, text="", parent=None):
-        super().__init__(text, parent)
-        self._full = text or ""
-        self.setToolTip(self._full)
-        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        self.setMinimumWidth(1)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._sync()
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        self._sync()
-
-    def _sync(self):
-        fm = QFontMetrics(self.font())
-        self.setText(fm.elidedText(self._full, Qt.ElideRight, max(1, self.width())))
-
-
 class TreatmentInterface(QWidget):
     """防治库维护：查看内置条目 + 增删改自己的当地农药标签（不动代码）"""
 
@@ -15291,6 +15268,8 @@ class TreatmentInterface(QWidget):
         col.setSpacing(0)
         name = _ElidedLabel(self._display_name(d.get("name")), w)
         name.setFont(ui_font(TYPE["body"], weight=QFont.DemiBold))
+        name.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        name.setMinimumWidth(1)
         name.setToolTip(d.get("name") or "")
         col.addWidget(name)
         meta_txt = d.get("dose") or d.get("spec") or "未填写用量"
@@ -16755,8 +16734,65 @@ class TrainInterface(QWidget):
                         position=InfoBarPosition.TOP, parent=self)
 
 
+class _SegmentedChoice(QWidget):
+    """分段选择器：外观按设计稿，接口沿用 ComboBox 的常用方法。"""
+
+    currentIndexChanged = pyqtSignal(int)
+
+    def __init__(self, items, parent=None):
+        super().__init__(parent)
+        self._items = list(items)
+        self._index = 0
+        self._buttons = []
+        h = QHBoxLayout(self)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(6)
+        for i, text in enumerate(self._items):
+            b = QPushButton(text, self)
+            b.setCheckable(True)
+            b.setAutoExclusive(True)
+            b.setFixedHeight(32)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setStyleSheet(
+                "QPushButton { background:#FFFFFF; color:%s; border:1px solid #DADFD7;"
+                " border-radius:4px; padding:0 14px; font-size:10.5pt; }"
+                "QPushButton:hover { background:#FAFBF8; }"
+                "QPushButton:checked { background:%s; color:%s;"
+                " border:1px solid transparent; font-weight:600; }"
+                % (NAU["subtext"], NAU["primary_light"], NAU["primary"]))
+            b.clicked.connect(lambda _=False, idx=i: self._choose(idx))
+            h.addWidget(b)
+            self._buttons.append(b)
+        h.addStretch()
+        self.setCurrentIndex(0, emit=False)
+
+    def _choose(self, idx):
+        if idx != self._index:
+            self.setCurrentIndex(idx, emit=True)
+
+    def count(self):
+        return len(self._buttons)
+
+    def currentIndex(self):
+        return self._index
+
+    def currentText(self):
+        return self._items[self._index] if self._items else ""
+
+    def setCurrentIndex(self, idx, emit=True):
+        if not self._buttons:
+            return
+        idx = max(0, min(int(idx), len(self._buttons) - 1))
+        changed = idx != self._index
+        self._index = idx
+        for i, b in enumerate(self._buttons):
+            b.setChecked(i == idx)
+        if emit and changed:
+            self.currentIndexChanged.emit(idx)
+
+
 class SettingInterface(QWidget):
-    """API 设置：服务商 / Key / 模型 / 接口地址 / 看图能力。
+    """API 设置：服务商 / Key / 模型 / 接口地址 / 分析开关。
 
     模型名可自由填写（EditableComboBox），也能接任意 OpenAI 兼容服务——
     换模型、换服务商都不用改代码。
@@ -16764,12 +16800,23 @@ class SettingInterface(QWidget):
 
     PROVIDERS = [("deepseek", "DeepSeek"), ("qwen", "千问（阿里云）"),
                  ("custom", "自定义（OpenAI 兼容）")]
+    PROVIDER_SEG = ["DeepSeek", "通义千问", "自定义"]
+    SHORT_LABELS = {"deepseek": "DeepSeek", "qwen": "千问", "custom": "自定义"}
     MODELS = {
         "deepseek": ["deepseek-flash", "deepseek-v4-pro"],
         "qwen": ["qwen-vl-max", "qwen-vl-plus", "qwen-plus", "qwen-max"],
         "custom": [],
     }
     VISION_CHOICES = [("auto", "自动判断"), ("on", "强制：可看图"), ("off", "强制：纯文本")]
+    VISION_SEG = ["自动识别", "强制开启", "强制关闭"]
+    BASE_URLS = {"deepseek": "https://api.deepseek.com/v1",
+                 "qwen": "https://dashscope.aliyuncs.com/compatible-mode/v1"}
+    CHIP_COLORS = {
+        "green": (NAU["primary_light"], NAU["primary"]),
+        "amber": ("#FCF3E6", "#B77422"),
+        "grey": ("#F1F2EE", NAU["muted"]),
+    }
+    METRIC_TEXT = "mAP50 0.9079 ± 0.0050"
 
     def __init__(self, main):
         super().__init__()
@@ -16783,63 +16830,357 @@ class SettingInterface(QWidget):
                                 "qwen": CONFIG.get("qwen_model", "qwen-vl-max"),
                                 "custom": CONFIG.get("custom_model", "")}
         self._pending_base = CONFIG.get("custom_base_url", "")
+        self._hints = []
+        self._right_w = None
+        self._status_ready = False
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(32, 24, 32, 24)
-        root.setSpacing(6)
-        root.addWidget(page_title("API 设置", self))
-        root.addWidget(CaptionLabel("配置大模型服务商，用于识别结果页的智能分析", self))
-        root.addSpacing(14)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.scroll = ScrollArea(self)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        content = QWidget(self.scroll)
+        content.setObjectName("settingContent")
+        root = QVBoxLayout(content)
+        root.setContentsMargins(28, 14, 28, 6)
+        root.setSpacing(8)
+        self.root = root
 
-        card = HeaderCardWidget("服务商与密钥", self)
-        self.combo_provider = ComboBox(self)
-        self.combo_provider.addItems([label for _, label in self.PROVIDERS])
-        self.combo_provider.currentIndexChanged.connect(self._switch)
-        self.key_input = PasswordLineEdit(self)
-        self.key_input.setPlaceholderText("sk-...")
-        self.combo_model = EditableComboBox(self)      # 可直接输入任意模型名
-        self.combo_model.setPlaceholderText("模型名，例如 deepseek-flash")
-        self.base_input = LineEdit(self)
-        self.base_input.setPlaceholderText("https://api.example.com/v1（仅自定义服务需要）")
-        self.combo_vision = ComboBox(self)
-        self.combo_vision.addItems([label for _, label in self.VISION_CHOICES])
-        self.switch_thinking = SwitchButton(self)
-        self.switch_thinking.setOnText("深度思考")
-        self.switch_thinking.setOffText("快速回答")
-        self.switch_thinking.setToolTip("DeepSeek 思考模式：开=先出思维链再回答（更准但更慢更贵），关=直接回答")
-        self.switch_enable = SwitchButton(self)
-        self.switch_enable.setOnText("已启用")
-        self.switch_enable.setOffText("已关闭")
-        for label, widget in [("服务商", self.combo_provider), ("API Key", self.key_input),
-                              ("模型", self.combo_model), ("接口地址", self.base_input),
-                              ("看图能力", self.combo_vision), ("回答模式", self.switch_thinking),
-                              ("云端 AI 分析", self.switch_enable)]:
-            row = QHBoxLayout()
-            lbl = BodyLabel(label, card)
-            lbl.setFixedWidth(90)
-            row.addWidget(lbl)
-            row.addWidget(widget, 1)
-            card.viewLayout.addLayout(row)
-        self.lbl_cap = CaptionLabel("", card)          # 直接写出「能不能看图」，不用用户猜
-        self.lbl_cap.setWordWrap(True)
-        card.viewLayout.addWidget(self.lbl_cap)
-        root.addWidget(card)
-        self.combo_model.currentTextChanged.connect(lambda _=None: self._update_caption())
-        self.combo_vision.currentIndexChanged.connect(lambda _=None: self._update_caption())
-        # 注意：qfluentwidgets 的 SwitchButton 没有 toggled 信号，用的是 checkedChanged
-        self.switch_thinking.checkedChanged.connect(lambda _=None: self._update_caption())
+        root.addLayout(self._build_head())
+        body = QHBoxLayout()
+        body.setSpacing(16)
+        left = QVBoxLayout()
+        left.setSpacing(12)
+        left.addWidget(self._build_provider_card())
+        left.addWidget(self._build_analysis_card())
+        left.addWidget(self._build_advanced_card())
+        left.addLayout(self._build_savebar())
+        left.addStretch()
+        body.addLayout(left, 1)
+        body.addWidget(self._build_right_column(), 0)
+        root.addLayout(body, 1)
+        root.addLayout(self._build_footer())
 
-        row = QHBoxLayout()
-        btn_save = PrimaryPushButton(FIF.SAVE, "保存设置", self)
-        btn_save.setMinimumHeight(40)
-        btn_save.clicked.connect(self._save)
-        row.addWidget(btn_save)
-        row.addStretch()
-        root.addLayout(row)
-        root.addStretch()
+        self.scroll.setWidget(content)
+        outer.addWidget(self.scroll)
+        self._status_ready = True
         self._load()
 
-    # ── 内部：上下标转换 ──
+    # ── 页头 / 卡片 ──
+    def _build_head(self):
+        head = QHBoxLayout()
+        head.setSpacing(16)
+        left = QVBoxLayout()
+        left.setSpacing(2)
+        left.addWidget(page_title("API 设置", self))
+        sub = t_caption("配置大模型服务商，用于识别结果页的智能分析 · "
+                        "Key 只保存在本机 config.json（已排除出版本库）", self,
+                        color=NAU["muted"])
+        sub.setWordWrap(True)
+        sub.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        sub.setMinimumWidth(1)
+        left.addWidget(sub)
+        head.addLayout(left, 1)
+        acts = QHBoxLayout()
+        acts.setContentsMargins(0, 8, 0, 0)
+        self.btn_about = PushButton(FIF.INFO, "关于与许可", self)
+        self.btn_about.setFixedHeight(34)
+        self.btn_about.clicked.connect(lambda _=False: self.main.show_about())
+        acts.addWidget(self.btn_about)
+        head.addLayout(acts, 0)
+        return head
+
+    def _new_card(self, title, desc=""):
+        card = SimpleCardWidget(self)
+        v = QVBoxLayout(card)
+        v.setContentsMargins(14, 9, 14, 9)
+        v.setSpacing(4)
+        t = StrongBodyLabel(title, card)
+        t.setFont(ui_font(TYPE["body"] + 1, weight=QFont.DemiBold))
+        v.addWidget(t)
+        if desc:
+            d = t_caption(desc, card, color=NAU["muted"])
+            d.setWordWrap(True)
+            d.setToolTip(desc)
+            v.addWidget(d)
+        return card, v
+
+    def _row(self, parent, label, widget, hint=None, chip=None, stretch=1):
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        row.setContentsMargins(0, 1, 0, 0)
+        lab = QLabel(label, parent)
+        lab.setFont(ui_font(TYPE["body"]))
+        lab.setStyleSheet("color:%s; background:transparent;" % NAU["muted"])
+        lab.setFixedWidth(116)
+        row.addWidget(lab)
+        row.addWidget(widget, stretch)
+        if chip is not None:
+            row.addWidget(chip)
+        if hint:
+            h = t_caption(hint, parent, color=NAU["muted"])
+            self._hints.append(h)
+            row.addWidget(h, 0)
+        if stretch == 0:
+            row.addStretch()
+        return row
+
+    def _chip(self, text, kind, parent):
+        lbl = QLabel(text, parent)
+        lbl.setAlignment(Qt.AlignCenter)
+        self._set_chip(lbl, text, kind)
+        return lbl
+
+    def _set_chip(self, lbl, text, kind="grey"):
+        bg, fg = self.CHIP_COLORS.get(kind, self.CHIP_COLORS["grey"])
+        lbl.setText(text)
+        lbl.setStyleSheet("background:%s; color:%s; border-radius:999px;"
+                          " padding:2px 9px; font-size:9pt; font-weight:600;"
+                          % (bg, fg))
+
+    def _build_provider_card(self):
+        card, v = self._new_card(
+            "服务商与密钥", "换服务商会保留各家的 Key 与模型名，随时可以切回。")
+        self.combo_provider = _SegmentedChoice(self.PROVIDER_SEG, card)
+        self.combo_provider.currentIndexChanged.connect(self._switch)
+        v.addLayout(self._row(card, "服务商", self.combo_provider))
+
+        self.key_input = PasswordLineEdit(card)
+        self.key_input.setFixedHeight(32)
+        self.key_input.setPlaceholderText("sk-...")
+        self.key_input.textChanged.connect(lambda _=None: self._on_key_changed())
+        self.key_chip = self._chip("未填写", "amber", card)
+        v.addLayout(self._row(card, "API Key", self.key_input, chip=self.key_chip))
+
+        self.combo_model = EditableComboBox(card)      # 可直接输入任意模型名
+        self.combo_model.setFixedHeight(32)
+        self.combo_model.setPlaceholderText("模型名，例如 deepseek-flash")
+        self.combo_model.currentTextChanged.connect(lambda _=None: self._on_model_changed())
+        v.addLayout(self._row(card, "模型", self.combo_model,
+                              hint="可直接输入任意模型名"))
+
+        self.base_input = LineEdit(card)
+        self.base_input.setFixedHeight(32)
+        self.base_input.setPlaceholderText("https://api.example.com/v1")
+        self.base_input.textChanged.connect(lambda _=None: self._sync_status())
+        v.addLayout(self._row(card, "接口地址", self.base_input,
+                              hint="仅自定义服务需要"))
+        return card
+
+    def _build_analysis_card(self):
+        card, v = self._new_card(
+            "分析与回答", "关闭云端分析后，本地检测、防治库与报告仍可正常使用，且不产生任何费用。")
+        self.combo_vision = _SegmentedChoice(self.VISION_SEG, card)
+        self.combo_vision.currentIndexChanged.connect(lambda _=None: self._on_option_changed())
+        v.addLayout(self._row(card, "看图能力", self.combo_vision))
+
+        self.switch_thinking = SwitchButton(card)
+        self.switch_thinking.setOnText("")
+        self.switch_thinking.setOffText("")
+        self.switch_thinking.setToolTip("开=先出思维链再回答（更准但更慢更贵），关=直接回答")
+        self.switch_thinking.checkedChanged.connect(lambda _=None: self._on_option_changed())
+        self.chip_thinking = self._chip("快速回答", "grey", card)
+        v.addLayout(self._row(card, "回答模式", self.switch_thinking,
+                              hint="深度思考更准，但更慢、更贵",
+                              chip=self.chip_thinking, stretch=0))
+
+        self.switch_enable = SwitchButton(card)
+        self.switch_enable.setOnText("")
+        self.switch_enable.setOffText("")
+        self.switch_enable.checkedChanged.connect(lambda _=None: self._on_option_changed())
+        self.chip_enable = self._chip("已关闭", "grey", card)
+        v.addLayout(self._row(card, "云端 AI 分析", self.switch_enable,
+                              hint="识别后自动生成诊断与治理建议",
+                              chip=self.chip_enable, stretch=0))
+
+        cap = QFrame(card)
+        cap.setStyleSheet("QFrame { background:#F7F8F5; border-radius:6px; }")
+        cl = QHBoxLayout(cap)
+        cl.setContentsMargins(10, 5, 10, 5)
+        self.lbl_cap = t_body("", cap, muted=True)
+        self.lbl_cap.setWordWrap(True)
+        cl.addWidget(self.lbl_cap, 1)
+        cap_row = QHBoxLayout()
+        cap_row.addSpacing(102)
+        cap_row.addWidget(cap, 1)
+        v.addLayout(cap_row)
+        return card
+
+    def _build_advanced_card(self):
+        card, v = self._new_card(
+            "高级与诊断", "一般保持默认即可；排查问题时可清空缓存或查看审计日志。")
+        self.switch_cache = SwitchButton(card)
+        self.switch_cache.setOnText("")
+        self.switch_cache.setOffText("")
+        self.switch_cache.checkedChanged.connect(lambda _=None: self._on_option_changed())
+        self.chip_cache = self._chip("已开启", "green", card)
+        v.addLayout(self._row(card, "回答缓存", self.switch_cache,
+                              hint="同图同提示词直接回放，不重复计费",
+                              chip=self.chip_cache, stretch=0))
+
+        audit = QFrame(card)
+        audit.setStyleSheet("QFrame { background:#F7F8F5; border-radius:6px; }")
+        al = QHBoxLayout(audit)
+        al.setContentsMargins(10, 5, 10, 5)
+        path = t_caption("logs/llm_log.jsonl · 记录模型、token、耗时、成本", audit,
+                         color=NAU["subtext"])
+        path.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        path.setMinimumWidth(1)
+        path.setToolTip(str(AUDIT_LOG))
+        al.addWidget(path, 1)
+        link = QLabel('<a href="#" style="color:%s; text-decoration:none;">查看 →</a>'
+                      % NAU["primary"], audit)
+        link.setTextFormat(Qt.RichText)
+        link.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        link.setOpenExternalLinks(False)
+        link.linkActivated.connect(lambda _=False: self._open_audit())
+        al.addWidget(link)
+        audit_row = QHBoxLayout()
+        audit_row.addSpacing(102)
+        audit_row.addWidget(audit, 1)
+        v.addLayout(audit_row)
+        return card
+
+    def _build_savebar(self):
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        row.setContentsMargins(0, 4, 0, 0)
+        self.btn_save = PrimaryPushButton(FIF.SAVE, "保存设置", self)
+        self.btn_save.setFixedHeight(38)
+        self.btn_save.setToolTip("保存后首次分析会校验连接；Key 只写本机 config.json")
+        self.btn_save.clicked.connect(self._save)
+        row.addWidget(self.btn_save)
+        self.btn_default = PushButton("恢复默认", self)
+        self.btn_default.setFixedHeight(38)
+        self.btn_default.setToolTip("恢复服务商/模型/开关默认值；API Key 保留")
+        self.btn_default.clicked.connect(self._restore_defaults)
+        row.addWidget(self.btn_default)
+        row.addStretch()
+        save_note = t_caption("修改后需保存才生效 · 首次分析会校验连接", self,
+                              color=NAU["muted"])
+        self._hints.append(save_note)
+        row.addWidget(save_note)
+        return row
+
+    def _build_right_column(self):
+        col = QWidget(self)
+        v = QVBoxLayout(col)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(12)
+
+        status = SimpleCardWidget(self)
+        sv = QVBoxLayout(status)
+        sv.setContentsMargins(14, 9, 14, 9)
+        sv.setSpacing(2)
+        title_row = QHBoxLayout()
+        title = StrongBodyLabel("当前配置", status)
+        title.setFont(ui_font(TYPE["body"] + 1, weight=QFont.DemiBold))
+        title_row.addWidget(title)
+        title_row.addStretch()
+        self.status_chip = self._chip("—", "grey", status)
+        title_row.addWidget(self.status_chip)
+        sv.addLayout(title_row)
+        desc = t_caption("保存后生效；未保存改动会标为待保存。", status,
+                         color=NAU["muted"])
+        desc.setWordWrap(True)
+        sv.addWidget(desc)
+        self.st_provider = self._kv(sv, status, "服务商")
+        self.st_model = self._kv(sv, status, "模型")
+        self.st_vision = self._kv(sv, status, "看图能力")
+        self.st_enable = self._kv(sv, status, "云端 AI 分析")
+        self.st_mode = self._kv(sv, status, "回答模式")
+        self.st_chain = self._kv(sv, status, "服务商降级链")
+        v.addWidget(status, 0)
+
+        privacy, pv = self._new_card("隐私与合规")
+        pv.addLayout(self._note(privacy, FIF.INFO,
+                                "Key 只存本机：config.json 不随仓库或安装包分发。"))
+        pv.addLayout(self._note(privacy, FIF.PHOTO,
+                                "图片只在开启云端分析时上传；关闭后本机推理。"))
+        pv.addLayout(self._note(privacy, FIF.DOCUMENT,
+                                "调用可追溯：logs/llm_log.jsonl 记录模型、token、耗时与成本。"))
+        pv.addStretch()
+        links = QLabel('<a href="audit" style="color:%s; text-decoration:none;">'
+                       '查看审计日志 →</a>　<a href="ledger" style="color:%s;'
+                       ' text-decoration:none;">导出运行台账 →</a>'
+                       % (NAU["primary"], NAU["primary"]), privacy)
+        links.setTextFormat(Qt.RichText)
+        links.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        links.setOpenExternalLinks(False)
+        links.linkActivated.connect(self._on_privacy_link)
+        pv.addWidget(links)
+        v.addWidget(privacy, 1)
+
+        version, vv = self._new_card("版本与模型")
+        kv1 = self._kv(vv, version, "程序版本")
+        kv1.setText("v" + APP_VERSION)
+        kv2 = self._kv(vv, version, "检测模型")
+        kv2.setText("%s · 六类" % MODEL_INFO.get("模型版本", "YOLOv8n"))
+        kv3 = self._kv(vv, version, "对外指标")
+        kv3.setText(self.METRIC_TEXT)
+        kv3.setToolTip("簇级 5 折交叉验证，YOLOv8n；出处 docs/实验记录.md 实验十四")
+        kv4 = self._kv(vv, version, "开源组件")
+        kv4.setText("PyQt5 · Ultralytics 等")
+        kv4.setFont(ui_font(TYPE["caption"], weight=QFont.Medium))
+        kv4.setToolTip("PyQt5 / Ultralytics / pypdf / Lucide / Noto Sans SC；详见关于与许可")
+        vlink = QLabel('<a href="#" style="color:%s; text-decoration:none;">'
+                       '查看技术附录与许可 →</a>' % NAU["primary"], version)
+        vlink.setTextFormat(Qt.RichText)
+        vlink.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        vlink.setOpenExternalLinks(False)
+        vlink.linkActivated.connect(lambda _=False: self.main.show_about())
+        vv.addWidget(vlink)
+        v.addWidget(version, 0)
+
+        self.right_col = col
+        return col
+
+    def _kv(self, layout, parent, key):
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 1, 0, 0)
+        row.setSpacing(8)
+        k = QLabel(key, parent)
+        k.setFont(ui_font(TYPE["body"] - 1))
+        k.setStyleSheet("color:%s; background:transparent;" % NAU["muted"])
+        k.setFixedWidth(116)
+        row.addWidget(k)
+        val = QLabel("—", parent)
+        val.setFont(ui_font(TYPE["body"] - 1, weight=QFont.DemiBold))
+        val.setStyleSheet("color:%s; background:transparent;" % NAU["dark"])
+        val.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        val.setMinimumWidth(1)
+        row.addWidget(val, 1)
+        layout.addLayout(row)
+        return val
+
+    def _note(self, parent, icon, text):
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 3, 0, 0)
+        row.setSpacing(8)
+        ic = QLabel(parent)
+        ic.setFixedSize(14, 14)
+        ic.setPixmap(icon.icon(color=QColor(NAU["primary"])).pixmap(14, 14))
+        ic.setAlignment(Qt.AlignCenter)
+        row.addWidget(ic, 0, Qt.AlignTop)
+        lbl = QLabel(text, parent)
+        lbl.setTextFormat(Qt.PlainText)
+        lbl.setWordWrap(True)
+        lbl.setFont(ui_font(TYPE["caption"], weight=QFont.Medium))
+        lbl.setStyleSheet("color:%s; background:transparent;" % NAU["subtext"])
+        row.addWidget(lbl, 1)
+        return row
+
+    def _build_footer(self):
+        foot = QHBoxLayout()
+        foot.setContentsMargins(2, 2, 2, 0)
+        foot.addWidget(t_caption("稻视界 · 南京农业大学 · 诚朴勤仁", self,
+                                 color=NAU["muted"]))
+        foot.addStretch()
+        foot.addWidget(t_caption("配置修改即时生效需保存 · 本页不显示完整 Key",
+                                 self, color=NAU["muted"]))
+        return foot
+
+    # ── 内部：上下标转换 / 载入 ──
     def _provider_key(self):
         idx = max(0, self.combo_provider.currentIndex())
         return self.PROVIDERS[min(idx, len(self.PROVIDERS) - 1)][0]
@@ -16851,62 +17192,177 @@ class SettingInterface(QWidget):
     def _load(self):
         keys = [k for k, _ in self.PROVIDERS]
         idx = keys.index(self._pending_provider) if self._pending_provider in keys else 0
-        self.combo_provider.setCurrentIndex(idx)
+        self.combo_provider.setCurrentIndex(idx, emit=False)
         vkeys = [k for k, _ in self.VISION_CHOICES]
         v = CONFIG.get("vision_override", "auto")
-        self.combo_vision.setCurrentIndex(vkeys.index(v) if v in vkeys else 0)
-        self._refresh()
+        self.combo_vision.setCurrentIndex(vkeys.index(v) if v in vkeys else 0, emit=False)
         self.switch_thinking.setChecked(CONFIG.get("llm_thinking", False))
         self.switch_enable.setChecked(CONFIG.get("enable_llm", False))
+        self.switch_cache.setChecked(CONFIG.get("enable_llm_cache", True))
+        self._refresh()
 
-    def _switch(self, idx):
-        """切服务商：先把当前页面填的内容存进暂存区，再刷新成新服务商的"""
-        p = self._pending_provider
+    def _stash_current(self, p):
         self._pending_keys[p] = self.key_input.text().strip()
         self._pending_models[p] = self.combo_model.currentText().strip()
         if p == "custom":
             self._pending_base = self.base_input.text().strip()
-        self._pending_provider = self._provider_key()
+
+    def _switch(self, idx):
+        """切服务商：先把当前页面填的内容存进暂存区，再刷新成新服务商的"""
+        p = self._pending_provider
+        self._stash_current(p)
+        keys = [k for k, _ in self.PROVIDERS]
+        self._pending_provider = keys[idx] if 0 <= idx < len(keys) else "deepseek"
         self._refresh()
 
     def _refresh(self):
         p = self._pending_provider
         self.key_input.setText(self._pending_keys.get(p, ""))
         self.key_input.setPlaceholderText("sk-..." if p != "custom" else "服务商给的 Key")
-        self.base_input.setText(self._pending_base if p == "custom" else "")
-        self.base_input.setEnabled(p == "custom")
+        if p == "custom":
+            self.base_input.setEnabled(True)
+            self.base_input.setText(self._pending_base)
+            self.base_input.setPlaceholderText("https://api.example.com/v1")
+        else:
+            self.base_input.setEnabled(False)
+            self.base_input.setText(self.BASE_URLS.get(p, ""))
+            self.base_input.setPlaceholderText("")
         items = self.MODELS.get(p, [])
         self.combo_model.clear()
         if items:
             self.combo_model.addItems(items)
-        self.combo_model.setCurrentText(self._pending_models.get(p, "") or (items[0] if items else ""))
+        self.combo_model.setCurrentText(self._pending_models.get(p, "")
+                                        or (items[0] if items else ""))
         self._update_caption()
+        self._update_chips()
+        self._sync_status()
 
     def _update_caption(self):
         """把「这个模型能不能看图」直接写出来，省得用户猜"""
         p = self._provider_key()
         model = self.combo_model.currentText().strip()
         can = model_supports_vision(p, model, self._vision_key())
-        mode = "深度思考（先思维链再回答，更慢更贵）" if self.switch_thinking.isChecked() \
-            else "快速回答（直接出结果）"
         try:
             _cost = usage_cost_summary()
-            _cost_txt = "　·　已调用 %d 次 · 约 %.3f 元" % (_cost["调用次数"],
-                                                      _cost["估算费用元"] or 0.0)
+            _cost_txt = ("已调用 %d 次 · 估算 %.2f 元" % (_cost["调用次数"],
+                                                       _cost["估算费用元"] or 0.0)
+                         if _cost["调用次数"] else "暂无调用记录")
         except Exception:
             _cost_txt = ""
         self.lbl_cap.setText(
-            "当前：%s · %s · %s · %s%s" % (
-                PROVIDER_LABELS.get(p, p), model or "未填模型",
-                "可看图（照片会发给服务商）" if can else "纯文本（不发照片）", mode, _cost_txt))
+            "%s · %s · %s · %s" % (
+                model or "未填模型",
+                "可看图" if can else "纯文本",
+                "深度思考" if self.switch_thinking.isChecked() else "快速回答",
+                _cost_txt))
+        self.lbl_cap.setToolTip("可看图时照片会发给服务商；纯文本不发照片。"
+                                "深度思考更准但更慢更贵；回答缓存命中不重复计费。")
         self.lbl_cap.setTextColor(NAU["subtext"], NAU["subtext"])
 
+    def _update_chips(self):
+        p = self._pending_provider
+        key = self.key_input.text().strip()
+        saved = CONFIG.get(PROVIDER_KEYS.get(p, ""), "")
+        if not key:
+            self._set_chip(self.key_chip, "未填写", "amber")
+        elif key == saved:
+            self._set_chip(self.key_chip, "已保存", "green")
+        else:
+            self._set_chip(self.key_chip, "已填写", "green")
+        on = self.switch_enable.isChecked()
+        self._set_chip(self.chip_enable, "已启用" if on else "已关闭",
+                       "green" if on else "grey")
+        th = self.switch_thinking.isChecked()
+        self._set_chip(self.chip_thinking, "深度思考" if th else "快速回答",
+                       "green" if th else "grey")
+        cache = self.switch_cache.isChecked()
+        self._set_chip(self.chip_cache, "已开启" if cache else "已关闭",
+                       "green" if cache else "grey")
+
+    def _pending_chain_labels(self):
+        p = self._pending_provider
+        order = [p] + [q for q in ("deepseek", "qwen", "custom") if q != p]
+        out = []
+        for q in order:
+            if q == p:
+                key = self.key_input.text().strip()
+                model = self.combo_model.currentText().strip()
+                base = self.base_input.text().strip() if q == "custom" else "ok"
+            else:
+                key = self._pending_keys.get(q, "")
+                model = self._pending_models.get(q, "")
+                base = self._pending_base if q == "custom" else "ok"
+            if key and model and base:
+                out.append(self.SHORT_LABELS.get(q, q))
+        return out
+
+    def _dirty(self):
+        p = self._pending_provider
+        if p != CONFIG.get("llm_provider", "deepseek"):
+            return True
+        if self.key_input.text().strip() != CONFIG.get(PROVIDER_KEYS.get(p, ""), ""):
+            return True
+        if self.combo_model.currentText().strip() != CONFIG.get(PROVIDER_MODEL_KEYS.get(p, ""), ""):
+            return True
+        if p == "custom" and self.base_input.text().strip() != CONFIG.get("custom_base_url", ""):
+            return True
+        for q, _lab in self.PROVIDERS:
+            if q == p:
+                continue
+            if self._pending_keys.get(q, "") != CONFIG.get(PROVIDER_KEYS.get(q, ""), ""):
+                return True
+            if self._pending_models.get(q, "") != CONFIG.get(PROVIDER_MODEL_KEYS.get(q, ""), ""):
+                return True
+        if p != "custom" and self._pending_base != CONFIG.get("custom_base_url", ""):
+            return True
+        return (self._vision_key() != CONFIG.get("vision_override", "auto")
+                or self.switch_thinking.isChecked() != CONFIG.get("llm_thinking", False)
+                or self.switch_enable.isChecked() != CONFIG.get("enable_llm", False)
+                or self.switch_cache.isChecked() != CONFIG.get("enable_llm_cache", True))
+
+    def _sync_status(self):
+        if not self._status_ready:
+            return
+        p = self._pending_provider
+        model = self.combo_model.currentText().strip()
+        self.st_provider.setText(self.SHORT_LABELS.get(p, p))
+        self.st_model.setText(model or "未填模型")
+        self.st_model.setToolTip(model)
+        vision = {"auto": "自动识别", "on": "强制开启", "off": "强制关闭"}.get(
+            self._vision_key(), "自动识别")
+        self.st_vision.setText(vision)
+        self.st_enable.setText("已启用" if self.switch_enable.isChecked() else "已关闭")
+        self.st_mode.setText("深度思考" if self.switch_thinking.isChecked() else "快速回答")
+        chain = self._pending_chain_labels()
+        chain_txt = " → ".join(chain) if chain else "无可用服务商"
+        self.st_chain.setText(chain_txt)
+        self.st_chain.setToolTip("主服务失败时按此顺序自动切换")
+        if self._dirty():
+            self._set_chip(self.status_chip, "待保存", "amber")
+        elif not self.switch_enable.isChecked():
+            self._set_chip(self.status_chip, "未启用", "grey")
+        elif not self.key_input.text().strip():
+            self._set_chip(self.status_chip, "缺少 Key", "amber")
+        else:
+            self._set_chip(self.status_chip, "运行正常", "green")
+
+    def _on_key_changed(self):
+        self._update_chips()
+        self._sync_status()
+
+    def _on_model_changed(self):
+        self._update_caption()
+        self._sync_status()
+
+    def _on_option_changed(self):
+        self._update_caption()
+        self._update_chips()
+        self._sync_status()
+
+    # ── 操作 ──
     def _save(self):
         p = self._provider_key()
-        self._pending_keys[p] = self.key_input.text().strip()
-        self._pending_models[p] = self.combo_model.currentText().strip()
-        if p == "custom":
-            self._pending_base = self.base_input.text().strip()
+        self._stash_current(p)
         CONFIG["llm_provider"] = p
         CONFIG["deepseek_api_key"] = self._pending_keys.get("deepseek", "")
         CONFIG["deepseek_model"] = self._pending_models.get("deepseek", "deepseek-flash")
@@ -16918,9 +17374,91 @@ class SettingInterface(QWidget):
         CONFIG["vision_override"] = self._vision_key()
         CONFIG["llm_thinking"] = self.switch_thinking.isChecked()
         CONFIG["enable_llm"] = self.switch_enable.isChecked()
+        CONFIG["enable_llm_cache"] = self.switch_cache.isChecked()
         save_config(CONFIG)
         InfoBar.success("已保存", "当前：%s" % provider_label(), duration=3000,
                         position=InfoBarPosition.TOP, parent=self)
+        self._update_chips()
+        self._sync_status()
+
+    def _restore_defaults(self):
+        self._pending_provider = "deepseek"
+        self._pending_models = {"deepseek": DEFAULT_CONFIG["deepseek_model"],
+                                "qwen": DEFAULT_CONFIG["qwen_model"],
+                                "custom": DEFAULT_CONFIG["custom_model"]}
+        self._pending_base = ""
+        self.combo_provider.setCurrentIndex(0, emit=False)
+        self.combo_vision.setCurrentIndex(0, emit=False)
+        self.switch_thinking.setChecked(False)
+        self.switch_enable.setChecked(False)
+        self.switch_cache.setChecked(True)
+        self._refresh()
+        InfoBar.info("已恢复默认", "API Key 保留，修改后点「保存设置」生效", duration=4000,
+                     position=InfoBarPosition.TOP, parent=self)
+
+    def _open_audit(self):
+        try:
+            AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
+            if not AUDIT_LOG.exists():
+                AUDIT_LOG.write_text("", encoding="utf-8")
+            os.startfile(str(AUDIT_LOG))
+        except Exception as e:
+            InfoBar.error("打不开审计日志", str(e)[:120], duration=4000,
+                          position=InfoBarPosition.TOP, parent=self)
+
+    def _on_privacy_link(self, url):
+        if url == "audit":
+            self._open_audit()
+        elif url == "ledger":
+            self._export_ledger()
+
+    def _export_ledger(self):
+        try:
+            path, s = export_usage_ledger()
+        except Exception as e:
+            InfoBar.error("导出失败", str(e)[:120], duration=5000,
+                          position=InfoBarPosition.TOP, parent=self)
+            return
+        InfoBar.success("已导出", "检测 %s 次 · AI 分析 %s 次 · 实训 %s 题"
+                        % (s["检测次数"], s["AI 分析次数"], s["实训答题数"]),
+                        duration=5000, position=InfoBarPosition.TOP, parent=self)
+        try:
+            os.startfile(str(path))
+        except Exception as e:
+            InfoBar.error("打开失败", str(e)[:120], duration=4000,
+                          position=InfoBarPosition.TOP, parent=self)
+
+    # ── 大屏 / 窄窗适配 ──
+    def _apply_content_width(self):
+        if not hasattr(self, "root"):
+            return
+        vw = self.scroll.viewport().width() if hasattr(self, "scroll") else self.width()
+        side = max(28, (vw - CONTENT_MAX_WIDTH) // 2)
+        self.root.setContentsMargins(side, 14, side, 6)
+        narrow = self.width() < 1050
+        for h in self._hints:
+            h.setVisible(not narrow)
+
+    def _reflow_right_col(self):
+        col = getattr(self, "right_col", None)
+        if col is None:
+            return
+        w = 376 if self.width() >= 1050 else 340
+        if self._right_w != w:
+            self._right_w = w
+            col.setFixedWidth(w)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply_content_width()
+        self._reflow_right_col()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._apply_content_width()
+        self._reflow_right_col()
+        self._update_caption()
+        self._sync_status()
 
 
 # ── 主窗口 ────────────────────────────────────────────────────

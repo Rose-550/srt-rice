@@ -178,27 +178,27 @@ wi.grab().save(str(OUT / "watch_1120.png"))
 # ── 教学与考核（图片考核工作台）──
 win.switchTo(win.trainInterface)
 QTest.qWait(300)
-ti = win.trainInterface
+train = win.trainInterface
 check("1120 教学页无横向溢出",
-      ti.scroll.widget().minimumSizeHint().width() <= ti.scroll.viewport().width(),
-      (ti.scroll.widget().minimumSizeHint().width(), ti.scroll.viewport().width()))
+      train.scroll.widget().minimumSizeHint().width() <= train.scroll.viewport().width(),
+      (train.scroll.widget().minimumSizeHint().width(), train.scroll.viewport().width()))
 win.resize(1380, 900)
 QTest.qWait(300)
-lw, rw = ti.left_card.width(), ti.right_card.width()
+lw, rw = train.left_card.width(), train.right_card.width()
 check("1380 教学页为 45/55 两栏", 0.40 <= lw / max(1, lw + rw) <= 0.50,
       "left=%d right=%d ratio=%.1f%%" % (lw, rw, lw / max(1, lw + rw) * 100))
-a, b, c = ti.opts[0], ti.opts[1], ti.opts[2]
+a, b, c = train.opts[0], train.opts[1], train.opts[2]
 check("答题选项为 2×3 字母网格",
-      len(ti.opts) == 7 and len(ti._opt_views) == 6
+      len(train.opts) == 7 and len(train._opt_views) == 6
       and a.y() == b.y() and c.y() > a.y() and abs(a.x() - c.x()) < 4,
-      (len(ti.opts), a.x(), a.y(), b.x(), b.y(), c.x(), c.y()))
+      (len(train.opts), a.x(), a.y(), b.x(), b.y(), c.x(), c.y()))
 check("「不确定」占独立一行",
-      ti.btn_unsure.y() > ti.opts[2].y(), (ti.btn_unsure.y(), ti.opts[2].y()))
+      train.btn_unsure.y() > train.opts[2].y(), (train.btn_unsure.y(), train.opts[2].y()))
 check("讲评卡为三段（结论 / 症状 / 防治）",
-      ti.fb_symptom_title.text() == "典型症状"
-      and ti.fb_prevent_title.text() == "防治要点"
-      and not ti.feedback_card.isHidden())
-ti.grab().save(str(OUT / "train_1380.png"))
+      train.fb_symptom_title.text() == "典型症状"
+      and train.fb_prevent_title.text() == "防治要点"
+      and not train.feedback_card.isHidden())
+train.grab().save(str(OUT / "train_1380.png"))
 
 # ── 图片识别（画布 + 信息栏）──
 win.switchTo(win.imageInterface)
@@ -439,6 +439,65 @@ check("1120 防治库页无横向溢出",
       ti.scroll.widget().minimumSizeHint().width() <= ti.scroll.viewport().width(),
       (ti.scroll.widget().minimumSizeHint().width(), ti.scroll.viewport().width()))
 
+# ── 设置（API） ──
+win.resize(1380, 900)
+win.switchTo(win.settingInterface)
+QTest.qWait(500)
+se = win.settingInterface
+check("设置页 左表单 + 右栏 376",
+      se.right_col.width() == 376
+      and se.btn_save.isVisible() and se.btn_default.isVisible(),
+      (se.right_col.width(), se.btn_save.text(), se.btn_default.text()))
+check("设置页服务商分段 3 项",
+      se.combo_provider.count() == 3
+      and se.combo_provider.currentText() in ("DeepSeek", "通义千问", "自定义"),
+      (se.combo_provider.count(), se.combo_provider.currentText()))
+check("设置页模型可自由填写且默认现行模型",
+      hasattr(se, "combo_model") and se.combo_model.currentText().strip() != ""
+      and se.base_input.isEnabled() is False,
+      (se.combo_model.currentText(), se.base_input.isEnabled()))
+check("设置页直接写出看图能力与回答模式",
+      ("可看图" in se.lbl_cap.text() or "纯文本" in se.lbl_cap.text())
+      and ("回答" in se.lbl_cap.text() or "思考" in se.lbl_cap.text()),
+      se.lbl_cap.text()[:80])
+# 服务商记忆：改 deepseek Key → 切千问 → 再切回，Key 应恢复
+se.key_input.setText("CHECK_DKEY")
+se.combo_provider.setCurrentIndex(1, emit=True)
+QTest.qWait(150)
+qwen_key = se.key_input.text()
+se.key_input.setText("CHECK_QKEY")
+se.combo_provider.setCurrentIndex(0, emit=True)
+QTest.qWait(150)
+check("设置页切服务商保留各家 Key/模型",
+      qwen_key == "" and se.key_input.text() == "CHECK_DKEY"
+      and se.combo_model.currentText() == "deepseek-flash",
+      (qwen_key == "", se.key_input.text() == "CHECK_DKEY",
+       se.combo_model.currentText()))
+se.combo_provider.setCurrentIndex(2, emit=True)
+QTest.qWait(150)
+check("自定义服务启用接口地址输入",
+      se.base_input.isEnabled() is True,
+      se.base_input.isEnabled())
+se._restore_defaults()
+QTest.qWait(150)
+check("恢复默认保留 Key 并回到 DeepSeek",
+      se.combo_provider.currentText() == "DeepSeek"
+      and se.combo_vision.currentText() == "自动识别"
+      and se.key_input.text() == "CHECK_DKEY",
+      (se.combo_provider.currentText(), se.combo_vision.currentText(),
+       se.key_input.text() == "CHECK_DKEY"))
+check("设置右栏当前配置/隐私/版本齐全",
+      se.st_provider.text() in ("DeepSeek", "千问", "自定义")
+      and bool(se.st_chain.text())
+      and any(se.METRIC_TEXT in l.text() for l in se.findChildren(m.QLabel)),
+      (se.st_provider.text(), se.st_chain.text(), se.status_chip.text()))
+se.grab().save(str(OUT / "setting_1380.png"))
+win.resize(1120, 720)
+QTest.qWait(300)
+check("1120 设置页无横向溢出",
+      se.scroll.widget().minimumSizeHint().width() <= se.scroll.viewport().width(),
+      (se.scroll.widget().minimumSizeHint().width(), se.scroll.viewport().width()))
+
 # ── 1920 全屏（决赛演示基线）──
 win.resize(1920, 1080)
 QTest.qWait(400)
@@ -479,12 +538,12 @@ wi.grab().save(str(OUT / "watch_1920.png"))
 
 win.switchTo(win.trainInterface)
 QTest.qWait(300)
-check("1920 教学页内容限宽居中", ti.root.contentsMargins().left() >= 200,
-      ti.root.contentsMargins().left())
+check("1920 教学页内容限宽居中", train.root.contentsMargins().left() >= 200,
+      train.root.contentsMargins().left())
 check("1920 教学页无横向溢出",
-      ti.scroll.widget().minimumSizeHint().width() <= ti.scroll.viewport().width(),
-      (ti.scroll.widget().minimumSizeHint().width(), ti.scroll.viewport().width()))
-ti.grab().save(str(OUT / "train_1920.png"))
+      train.scroll.widget().minimumSizeHint().width() <= train.scroll.viewport().width(),
+      (train.scroll.widget().minimumSizeHint().width(), train.scroll.viewport().width()))
+train.grab().save(str(OUT / "train_1920.png"))
 
 win.switchTo(win.imageInterface)
 QTest.qWait(300)
@@ -534,6 +593,16 @@ check("1920 防治库无横向溢出",
       ti.scroll.widget().minimumSizeHint().width() <= ti.scroll.viewport().width(),
       (ti.scroll.widget().minimumSizeHint().width(), ti.scroll.viewport().width()))
 ti.grab().save(str(OUT / "treatment_1920.png"))
+
+win.switchTo(win.settingInterface)
+QTest.qWait(300)
+check("1920 设置页右栏 376 + 内容限宽",
+      se.right_col.width() == 376 and se.root.contentsMargins().left() >= 200,
+      (se.right_col.width(), se.root.contentsMargins().left()))
+check("1920 设置页无横向溢出",
+      se.scroll.widget().minimumSizeHint().width() <= se.scroll.viewport().width(),
+      (se.scroll.widget().minimumSizeHint().width(), se.scroll.viewport().width()))
+se.grab().save(str(OUT / "setting_1920.png"))
 
 win.close()
 print("\n通过 %d 项，失败 %d 项" % (len(PASS), len(FAIL)))
