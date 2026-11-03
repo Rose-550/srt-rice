@@ -347,6 +347,98 @@ check("1120 科普页无横向溢出",
       si.scroll.widget().minimumSizeHint().width() <= si.scroll.viewport().width(),
       (si.scroll.widget().minimumSizeHint().width(), si.scroll.viewport().width()))
 
+# ── 防治库维护 ──
+win.resize(1380, 900)
+win.switchTo(win.treatmentInterface)
+QTest.qWait(500)
+ti = win.treatmentInterface
+udb = OUT / "treatment" / "user_db.json"
+if udb.exists():
+    udb.unlink()
+    m.apply_user_db()
+    ti.reload()
+check("防治库页 列表 338 + 表单更宽",
+      ti.left_card.width() == 338 and ti.form_card.width() > ti.left_card.width(),
+      (ti.left_card.width(), ti.form_card.width()))
+check("防治库顶栏 新建 / 导入 / 更多",
+      isinstance(ti.btn_new, m.PrimaryPushButton)
+      and ti.btn_new.text() == "新建药剂"
+      and ti.btn_import.text() == "导入"
+      and ti.btn_more.menu() is not None,
+      (ti.btn_new.text(), ti.btn_import.text(), ti.btn_more.text()))
+check("防治库列表带内置标识",
+      ti.lst.count() >= 4 and len(ti._row_widgets) == ti.lst.count()
+      and ti._row_widgets[0]._chip_lbl.text() == "内置"
+      and bool(ti._row_widgets[0]._name_lbl.text()),
+      (ti.lst.count(), ti._row_widgets[0]._chip_lbl.text()
+       if ti._row_widgets else None))
+check("防治库我的条目空态",
+      "我的条目（0）" in ti.mine_title.text()
+      and "还没有补充条目" in ti.mine_body.text()
+      and ti.mine_box.isVisible(),
+      (ti.mine_title.text(), ti.mine_body.text()[:18]))
+check("防治库表单 12 字段 + 3 指标字段",
+      len(ti.inputs) == 12 and len(ti.th_inputs) == 3
+      and bool(ti.inputs["name"].text().strip())
+      and "只读" in ti.info_chip.text(),
+      (len(ti.inputs), len(ti.th_inputs), ti.info_chip.text()))
+check("防治库保存为主、内置删除禁用",
+      isinstance(ti.btn_save, m.PrimaryPushButton)
+      and not ti.btn_del.isEnabled()
+      and hasattr(ti, "btn_th"),
+      (ti.btn_save.text(), ti.btn_del.isEnabled()))
+ti.search.setText("阿维")
+QTest.qWait(100)
+check("防治库搜索按名称/登记证过滤",
+      ti.lst.count() >= 1
+      and all("阿维" in (d.get("name") or "") + (d.get("reg_no") or "")
+              + (d.get("dose") or "") for d in ti._shown_drugs),
+      (ti.lst.count(), [d.get("name") for d in ti._shown_drugs]))
+ti.search.clear()
+QTest.qWait(100)
+ti.cmb_cls.setCurrentText("稻瘟病")
+QTest.qWait(200)
+check("防治库切换类别同步列表与表单",
+      ti.current_cls == "稻瘟病" and ti.lst.count() >= 1
+      and bool(ti.inputs["name"].text().strip()),
+      (ti.current_cls, ti.lst.count(), ti.inputs["name"].text()))
+ti.cmb_cls.setCurrentText("稻纵卷叶螟")
+QTest.qWait(200)
+ti.grab().save(str(OUT / "treatment_1380.png"))
+
+# 用户条目态：写一条临时用户药剂 → 检查「我的」标识与可删除 → 清理
+udb.parent.mkdir(parents=True, exist_ok=True)
+udb.write_text(json.dumps({
+    "version": 1,
+    "drugs": {"稻纵卷叶螟": [{
+        "name": "布局自检条目", "spec": "20% 悬浮剂", "dose": "10 ml/亩",
+        "safe_days": 14, "reg_no": "PD20990001", "method": "喷雾",
+        "max_per_season": 1, "target": "稻纵卷叶螟", "type": "化学",
+        "timing": "卵孵化盛期", "caution": "自检临时条目", "source": "自检"}]},
+    "thresholds": {}
+}, ensure_ascii=False), encoding="utf-8")
+m.apply_user_db()
+ti.reload()
+QTest.qWait(200)
+names = [d.get("name") for d in ti._shown_drugs]
+row = names.index("布局自检条目") if "布局自检条目" in names else 0
+ti.lst.setCurrentRow(row)
+QTest.qWait(100)
+check("防治库用户条目可编辑、可删除",
+      ti.current_drug is not None and ti.current_drug.get("origin") == "user"
+      and "我的" in ti.info_chip.text() and ti.btn_del.isEnabled()
+      and "我的条目（1）" in ti.mine_title.text(),
+      (ti.info_chip.text(), ti.btn_del.isEnabled(), ti.mine_title.text()))
+udb.unlink(missing_ok=True)
+m.apply_user_db()
+ti.reload()
+QTest.qWait(100)
+win.resize(1120, 720)
+QTest.qWait(300)
+check("1120 防治库页无横向溢出",
+      ti.scroll.widget().minimumSizeHint().width() <= ti.scroll.viewport().width(),
+      (ti.scroll.widget().minimumSizeHint().width(), ti.scroll.viewport().width()))
+
 # ── 1920 全屏（决赛演示基线）──
 win.resize(1920, 1080)
 QTest.qWait(400)
@@ -432,6 +524,16 @@ check("1920 科普页无横向溢出",
       si.scroll.widget().minimumSizeHint().width() <= si.scroll.viewport().width(),
       (si.scroll.widget().minimumSizeHint().width(), si.scroll.viewport().width()))
 si.grab().save(str(OUT / "science_1920.png"))
+
+win.switchTo(win.treatmentInterface)
+QTest.qWait(300)
+check("1920 防治库左栏 338 + 内容限宽",
+      ti.left_card.width() == 338 and ti.root.contentsMargins().left() >= 200,
+      (ti.left_card.width(), ti.root.contentsMargins().left()))
+check("1920 防治库无横向溢出",
+      ti.scroll.widget().minimumSizeHint().width() <= ti.scroll.viewport().width(),
+      (ti.scroll.widget().minimumSizeHint().width(), ti.scroll.viewport().width()))
+ti.grab().save(str(OUT / "treatment_1920.png"))
 
 win.close()
 print("\n通过 %d 项，失败 %d 项" % (len(PASS), len(FAIL)))

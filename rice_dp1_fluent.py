@@ -14933,6 +14933,29 @@ class AuditDialog(MessageBoxBase):
             box.setMinimumWidth(560)
 
 
+class _ElidedLabel(QLabel):
+    """单行省略标签：列表里的长药名不挤掉右侧「内置 / 我的」标识"""
+
+    def __init__(self, text="", parent=None):
+        super().__init__(text, parent)
+        self._full = text or ""
+        self.setToolTip(self._full)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.setMinimumWidth(1)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._sync()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._sync()
+
+    def _sync(self):
+        fm = QFontMetrics(self.font())
+        self.setText(fm.elidedText(self._full, Qt.ElideRight, max(1, self.width())))
+
+
 class TreatmentInterface(QWidget):
     """防治库维护：查看内置条目 + 增删改自己的当地农药标签（不动代码）"""
 
@@ -14942,6 +14965,11 @@ class TreatmentInterface(QWidget):
               ("max_per_season", "每季最多(次)", False), ("target", "登记对象", False),
               ("type", "类型(化学/生物)", False), ("timing", "防治适期", False),
               ("caution", "注意事项", False), ("source", "来源依据", False)]
+    CHIP_COLORS = {
+        "green": (NAU["primary_light"], NAU["primary"]),
+        "amber": ("#FCF3E6", "#B77422"),
+        "grey": ("#F1F2EE", NAU["muted"]),
+    }
 
     def __init__(self, main):
         super().__init__()
@@ -14949,144 +14977,505 @@ class TreatmentInterface(QWidget):
         self.setObjectName("treatmentInterface")
         self.current_cls = CLASS_NAMES[0]
         self.current_drug = None
+        self._shown_drugs = []
+        self._row_widgets = []
+        self._pending_name = None
+        self._left_w = None
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(32, 24, 32, 24)
-        root.setSpacing(10)
-        head = QHBoxLayout()
-        head.addWidget(page_title("防治库维护", self))
-        head.addStretch()
-        self.lbl_stat = CaptionLabel("", self)
-        head.addWidget(self.lbl_stat)
-        for label, icon, slot in (("库体检", FIF.DOCUMENT, self.show_audit),
-                                  ("导入", FIF.FOLDER_ADD, self.import_db),
-                                  ("导出", FIF.SAVE, self.export_db),
-                                  ("新建药剂", FIF.ADD, self.new_drug)):
-            b = PushButton(icon, label, self)
-            b.clicked.connect(slot)
-            head.addWidget(b)
-        root.addLayout(head)
-        root.addWidget(t_caption(
-            "内置条目来自农药登记标签（只读，不可删改）；你补充的条目可随时增删改，"
-            "同名时以你的为准。数据存在 treatment/user_db.json，升级程序不会丢。", self))
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.scroll = ScrollArea(self)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        content = QWidget(self.scroll)
+        content.setObjectName("treatmentContent")
+        root = QVBoxLayout(content)
+        root.setContentsMargins(28, 10, 28, 6)
+        root.setSpacing(8)
+        self.root = root
 
+        root.addLayout(self._build_head())
         body = QHBoxLayout()
         body.setSpacing(12)
-        # 左：类别 + 药剂列表
-        left = SimpleCardWidget(self)
-        lv = QVBoxLayout(left)
-        lv.setContentsMargins(14, 12, 14, 12)
+        body.addWidget(self._build_list_card(), 0)
+        body.addWidget(self._build_form_card(), 1)
+        root.addLayout(body, 1)
+        root.addLayout(self._build_footer())
+
+        self.scroll.setWidget(content)
+        outer.addWidget(self.scroll)
+
+        self.reload()
+
+    # ── 页头 / 列表 / 表单 ──
+    def _build_head(self):
+        head = QHBoxLayout()
+        head.setSpacing(16)
+        left = QVBoxLayout()
+        left.setSpacing(2)
+        left.addWidget(page_title("防治库维护", self))
+        sub = t_caption("内置条目只读 · 你的条目可增删改，同名以你为准 · "
+                        "数据存 treatment/user_db.json，升级不丢", self,
+                        color=NAU["muted"])
+        sub.setWordWrap(True)
+        sub.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        sub.setMinimumWidth(1)
+        left.addWidget(sub)
+        head.addLayout(left, 1)
+
+        acts = QHBoxLayout()
+        acts.setSpacing(8)
+        acts.setContentsMargins(0, 8, 0, 0)
+        self.btn_new = PrimaryPushButton(FIF.ADD, "新建药剂", self)
+        self.btn_new.setFixedHeight(34)
+        self.btn_new.clicked.connect(self.new_drug)
+        acts.addWidget(self.btn_new)
+        self.btn_import = PushButton(FIF.FOLDER_ADD, "导入", self)
+        self.btn_import.setFixedHeight(34)
+        self.btn_import.setToolTip("导入农技站提供的当地用药清单（JSON，按同名合并）")
+        self.btn_import.clicked.connect(self.import_db)
+        acts.addWidget(self.btn_import)
+        more = RoundMenu(parent=self)
+        act_audit = Action(FIF.DOCUMENT, "库体检", self)
+        act_audit.triggered.connect(lambda _=False: self.show_audit())
+        more.addAction(act_audit)
+        act_export = Action(FIF.SAVE, "导出我的库", self)
+        act_export.triggered.connect(lambda _=False: self.export_db())
+        more.addAction(act_export)
+        self.btn_more = DropDownPushButton("更多", self)
+        self.btn_more.setFixedHeight(34)
+        self.btn_more.setMenu(more)
+        acts.addWidget(self.btn_more)
+        head.addLayout(acts, 0)
+        return head
+
+    def _build_list_card(self):
+        card = SimpleCardWidget(self)
+        self.left_card = card
+        card.setFixedWidth(338)
+        lv = QVBoxLayout(card)
+        lv.setContentsMargins(14, 12, 14, 10)
         lv.setSpacing(8)
-        self.cmb_cls = ComboBox(left)
+
+        head = QHBoxLayout()
+        head.setSpacing(8)
+        title = StrongBodyLabel("药剂列表", card)
+        title.setFont(ui_font(TYPE["subtitle"] - 2, weight=QFont.DemiBold))
+        head.addWidget(title)
+        head.addStretch()
+        self.lbl_stat = QLabel(card)
+        head.addWidget(self.lbl_stat)
+        lv.addLayout(head)
+
+        self.cmb_cls = ComboBox(card)
         self.cmb_cls.addItems(CLASS_NAMES)
         self.cmb_cls.currentTextChanged.connect(self._on_cls)
         lv.addWidget(self.cmb_cls)
-        self.lst = QListWidget(left)
+
+        self.search = SearchLineEdit(card)
+        self.search.setPlaceholderText("搜索药剂名称、登记证号…")
+        self.search.textChanged.connect(self._fill_list)
+        lv.addWidget(self.search)
+
+        self.lst = QListWidget(card)
+        self.lst.setFrameShape(QFrame.NoFrame)
+        self.lst.setStyleSheet(
+            "QListWidget { background:transparent; border:none; outline:none; }"
+            "QListWidget::item { background:transparent; border:none; padding:0; }"
+            "QListWidget::item:selected, QListWidget::item:hover { background:transparent; }")
         self.lst.currentRowChanged.connect(self._on_drug)
         lv.addWidget(self.lst, 1)
-        body.addWidget(left, 4)
 
-        # 右：编辑表单 + 类别指标
-        right = SimpleCardWidget(self)
-        rv = QVBoxLayout(right)
-        rv.setContentsMargins(16, 14, 16, 14)
-        rv.setSpacing(8)
-        rv.addWidget(brand_title("药剂信息", right))
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(10)
-        grid.setVerticalSpacing(6)
+        self.empty_hint = t_caption("没有匹配的药剂，换个关键词试试", card,
+                                    color=NAU["muted"])
+        self.empty_hint.setAlignment(Qt.AlignCenter)
+        self.empty_hint.setVisible(False)
+        lv.addWidget(self.empty_hint)
+
+        self.mine_box = QFrame(card)
+        self.mine_box.setStyleSheet(
+            "QFrame { background:#FAFBF8; border:1px dashed #D5DBD3;"
+            " border-radius:6px; }")
+        mb = QVBoxLayout(self.mine_box)
+        mb.setContentsMargins(10, 8, 10, 8)
+        mb.setSpacing(3)
+        self.mine_title = t_caption("我的条目（0）", self.mine_box, color=NAU["muted"])
+        mb.addWidget(self.mine_title)
+        self.mine_body = t_caption("", self.mine_box, color=NAU["subtext"])
+        self.mine_body.setWordWrap(True)
+        mb.addWidget(self.mine_body)
+        self.mine_links = QLabel(
+            '<a href="new" style="color:%s; text-decoration:none;">新建药剂 →</a>'
+            '　<a href="import" style="color:%s; text-decoration:none;">导入清单 →</a>'
+            % (NAU["primary"], NAU["primary"]), self.mine_box)
+        self.mine_links.setTextFormat(Qt.RichText)
+        self.mine_links.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        self.mine_links.setOpenExternalLinks(False)
+        self.mine_links.linkActivated.connect(self._on_mine_link)
+        mb.addWidget(self.mine_links)
+        lv.addWidget(self.mine_box)
+
+        foot = QHBoxLayout()
+        foot.setContentsMargins(0, 2, 0, 0)
+        foot.setSpacing(6)
+        self.lbl_audit = t_caption("", card, color=NAU["muted"])
+        self.lbl_audit.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.lbl_audit.setMinimumWidth(1)
+        foot.addWidget(self.lbl_audit, 1)
+        audit_link = QLabel('<a href="#" style="color:%s; text-decoration:none;">'
+                            '库体检 →</a>' % NAU["primary"], card)
+        audit_link.setTextFormat(Qt.RichText)
+        audit_link.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        audit_link.setOpenExternalLinks(False)
+        audit_link.linkActivated.connect(lambda _=False: self.show_audit())
+        foot.addWidget(audit_link)
+        lv.addLayout(foot)
+        return card
+
+    def _build_form_card(self):
+        card = SimpleCardWidget(self)
+        self.form_card = card
+        v = QVBoxLayout(card)
+        v.setContentsMargins(12, 8, 12, 8)
+        v.setSpacing(5)
+
+        head = QHBoxLayout()
+        head.setSpacing(8)
+        title = StrongBodyLabel("药剂信息", card)
+        title.setFont(ui_font(TYPE["subtitle"] - 2, weight=QFont.DemiBold))
+        head.addWidget(title)
+        self.info_chip = QLabel(card)
+        head.addWidget(self.info_chip)
+        head.addStretch()
+        self.link_save_as = QLabel(
+            '<a href="#" style="color:%s; text-decoration:none;">'
+            '修改将另存为我的条目 →</a>' % NAU["primary"], card)
+        self.link_save_as.setTextFormat(Qt.RichText)
+        self.link_save_as.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        self.link_save_as.setOpenExternalLinks(False)
+        self.link_save_as.linkActivated.connect(lambda _=False: self._focus_name())
+        head.addWidget(self.link_save_as)
+        v.addLayout(head)
+
+        self.info_note = t_caption("", card, color=NAU["muted"])
+        self.info_note.setWordWrap(True)
+        v.addWidget(self.info_note)
+
         self.inputs = {}
-        for i, (key, label, required) in enumerate(self.FIELDS):
-            row, col = divmod(i, 2)
-            cell = QWidget(right)
-            cv = QVBoxLayout(cell)
-            cv.setContentsMargins(0, 0, 0, 0)
-            cv.setSpacing(2)
-            cv.addWidget(t_caption(label + ("（必填）" if required else ""), cell))
-            ed = LineEdit(cell)
-            cv.addWidget(ed)
-            self.inputs[key] = ed
-            grid.addWidget(cell, row, col)
-        rv.addLayout(grid)
+        grid1 = self._new_grid()
+        grid1.addWidget(self._field_cell("基本信息 · 药剂名称", "name", card, True), 0, 0)
+        grid1.addWidget(self._field_cell("规格剂型", "spec", card), 0, 1)
+        v.addLayout(grid1)
+
+        grid2 = self._new_grid()
+        for i, (key, label) in enumerate((("dose", "登记与用法 · 亩用量"),
+                                          ("safe_days", "安全间隔期（天）"),
+                                          ("reg_no", "登记证号"),
+                                          ("method", "施药方法"),
+                                          ("max_per_season", "每季最多（次）"),
+                                          ("target", "登记对象"),
+                                          ("type", "类型（化学 / 生物）"),
+                                          ("timing", "防治适期"))):
+            grid2.addWidget(self._field_cell(label, key, card), i // 2, i % 2)
+        v.addLayout(grid2)
+
+        grid3 = self._new_grid()
+        grid3.addWidget(self._field_cell("注意事项与来源 · 注意事项", "caution", card), 0, 0, 1, 2)
+        grid3.addWidget(self._field_cell("来源依据", "source", card), 1, 0, 1, 2)
+        v.addLayout(grid3)
+
         row_op = QHBoxLayout()
-        self.btn_save = PrimaryPushButton(FIF.SAVE, "保存到我的库", right)
+        row_op.setSpacing(8)
+        row_op.setContentsMargins(0, 2, 0, 0)
+        self.btn_save = PrimaryPushButton(FIF.SAVE, "保存到我的库", card)
+        self.btn_save.setFixedHeight(34)
         self.btn_save.clicked.connect(self.save_drug)
         row_op.addWidget(self.btn_save)
-        self.btn_del = PushButton(FIF.DELETE, "删除这条", right)
+        self.btn_del = PushButton(FIF.DELETE, "删除这条", card)
+        self.btn_del.setFixedHeight(34)
         self.btn_del.clicked.connect(self.delete_drug)
         row_op.addWidget(self.btn_del)
+        self.btn_reset = TransparentPushButton("重置", card)
+        self.btn_reset.setFixedHeight(34)
+        self.btn_reset.clicked.connect(self._reset_form)
+        row_op.addWidget(self.btn_reset)
         row_op.addStretch()
-        rv.addLayout(row_op)
-        rv.addWidget(t_caption("类别量化指标（覆盖内置，用于「什么时候该打药」的判断）", right))
+        v.addLayout(row_op)
+
+        line = QFrame(card)
+        line.setFixedHeight(1)
+        line.setStyleSheet("background:%s; border:none;" % NAU["divider"])
+        v.addWidget(line)
+
+        mhead = QHBoxLayout()
+        mhead.setSpacing(8)
+        st = StrongBodyLabel("类别量化指标", card)
+        st.setFont(ui_font(TYPE["body"], weight=QFont.DemiBold))
+        mhead.addWidget(st)
+        msub = t_caption("覆盖内置 · 用于打药时机判断", card, color=NAU["muted"])
+        mhead.addWidget(msub)
+        mhead.addStretch()
+        self.btn_th = PushButton(FIF.SAVE, "保存类别指标", card)
+        self.btn_th.setFixedHeight(32)
+        self.btn_th.clicked.connect(self.save_threshold)
+        mhead.addWidget(self.btn_th)
+        v.addLayout(mhead)
+
         self.th_inputs = {}
-        for label in ("量化指标", "施药适期", "指标来源"):
-            row = QHBoxLayout()
-            lab = BodyLabel(label, right)
-            lab.setFixedWidth(70)
-            row.addWidget(lab)
-            ed = LineEdit(right)
-            self.th_inputs[label] = ed
-            row.addWidget(ed, 1)
-            rv.addLayout(row)
-        btn_th = PushButton(FIF.SAVE, "保存类别指标", right)
-        btn_th.clicked.connect(self.save_threshold)
-        rv.addWidget(btn_th)
-        rv.addStretch()
-        body.addWidget(right, 6)
-        root.addLayout(body, 1)
-        self.reload()
+        th_grid = self._new_grid()
+        th_grid.addWidget(self._th_cell("量化指标", "量化指标", card), 0, 0, 1, 2)
+        th_grid.addWidget(self._th_cell("施药适期", "施药适期", card), 1, 0)
+        th_grid.addWidget(self._th_cell("指标来源", "指标来源", card), 1, 1)
+        v.addLayout(th_grid)
+        v.addStretch()
+        return card
+
+    def _new_grid(self):
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(4)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+        return grid
+
+    def _field_cell(self, label, key, parent, required=False):
+        cell = QWidget(parent)
+        cv = QVBoxLayout(cell)
+        cv.setContentsMargins(0, 0, 0, 0)
+        cv.setSpacing(2)
+        cv.addWidget(t_caption(label + ("（必填）" if required else ""), cell,
+                               color=NAU["muted"]))
+        ed = LineEdit(cell)
+        ed.setFixedHeight(32)
+        cv.addWidget(ed)
+        self.inputs[key] = ed
+        return cell
+
+    def _th_cell(self, label, key, parent):
+        cell = QWidget(parent)
+        cv = QVBoxLayout(cell)
+        cv.setContentsMargins(0, 0, 0, 0)
+        cv.setSpacing(2)
+        cv.addWidget(t_caption(label, cell, color=NAU["muted"]))
+        ed = LineEdit(cell)
+        ed.setFixedHeight(32)
+        cv.addWidget(ed)
+        self.th_inputs[key] = ed
+        return cell
+
+    def _build_footer(self):
+        foot = QHBoxLayout()
+        foot.setContentsMargins(2, 2, 2, 0)
+        foot.addWidget(t_caption("稻视界 · 南京农业大学 · 诚朴勤仁", self,
+                                 color=NAU["muted"]))
+        foot.addStretch()
+        foot.addWidget(t_caption("内置条目只读 · 用户数据独立存放 · 同名条目以用户为准",
+                                 self, color=NAU["muted"]))
+        return foot
+
+    # ── 小部件 ──
+    def _set_chip(self, lbl, text, kind="grey"):
+        bg, fg = self.CHIP_COLORS.get(kind, self.CHIP_COLORS["grey"])
+        lbl.setText(text)
+        lbl.setStyleSheet("background:%s; color:%s; border-radius:999px;"
+                          " padding:2px 9px; font-size:9pt; font-weight:600;"
+                          % (bg, fg))
+
+    def _make_row(self, d):
+        w = QWidget(self.lst)
+        w.setObjectName("drugRow")
+        h = QHBoxLayout(w)
+        h.setContentsMargins(9, 5, 9, 5)
+        h.setSpacing(8)
+        col = QVBoxLayout()
+        col.setSpacing(0)
+        name = _ElidedLabel(self._display_name(d.get("name")), w)
+        name.setFont(ui_font(TYPE["body"], weight=QFont.DemiBold))
+        name.setToolTip(d.get("name") or "")
+        col.addWidget(name)
+        meta_txt = d.get("dose") or d.get("spec") or "未填写用量"
+        if d.get("type") == "生物":
+            meta_txt += " · 生物"
+        meta = QLabel(meta_txt, w)
+        meta.setFont(ui_font(TYPE["caption"], weight=QFont.Medium))
+        meta.setStyleSheet("color:%s; background:transparent;" % NAU["muted"])
+        col.addWidget(meta)
+        h.addLayout(col, 1)
+        mine = d.get("origin") == "user"
+        chip = QLabel(w)
+        self._set_chip(chip, "我的" if mine else "内置", "green" if mine else "grey")
+        h.addWidget(chip, 0, Qt.AlignVCenter)
+        w._name_lbl = name
+        w._chip_lbl = chip
+        w.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        return w
+
+    def _style_rows(self):
+        cur = self.lst.currentRow()
+        for i, w in enumerate(self._row_widgets):
+            on = i == cur
+            w.setStyleSheet("QWidget#drugRow { background:%s; border-radius:6px; }"
+                            % (NAU["primary_light"] if on else "transparent"))
+            w._name_lbl.setStyleSheet("color:%s; background:transparent;"
+                                      % (NAU["primary"] if on else NAU["text"]))
+
+    @staticmethod
+    def _display_name(name):
+        name = (name or "").strip() or "未命名"
+        if len(name) <= 9:
+            return name
+        short = name.split("（")[0].strip()
+        return short or name
+
+    def _on_mine_link(self, url):
+        if url == "new":
+            self.new_drug()
+        elif url == "import":
+            self.import_db()
+
+    def _focus_name(self):
+        ed = self.inputs.get("name")
+        if ed is not None:
+            ed.setFocus()
+            ed.selectAll()
 
     # ── 数据 ──
     def reload(self):
-        st = user_db_stats()
-        a = treatments_audit()
-        self.lbl_stat.setText("内置+用户共 %d 条（我补充的 %d 条）· 类别指标 %d 个 · 登记证号完整度 %d%%"
-                              % (a["药剂条目"], st["用户药剂"], st["用户指标"],
-                                 a["有登记证号"] * 100 // max(1, a["药剂条目"])))
+        self._fill_thresholds()
         self._fill_list()
+        self._refresh_counts()
+        self._refresh_mine_box()
+        self._refresh_audit()
+
+    def _refresh_counts(self):
+        total = mine = 0
+        for tr in TREATMENT_DB.values():
+            for d in tr.get("drugs", []):
+                total += 1
+                if d.get("origin") == "user":
+                    mine += 1
+        self._set_chip(self.lbl_stat, "%d 条 · 我的 %d" % (total, mine), "grey")
+        self.lbl_stat.setToolTip("内置 %d 条 · 我的 %d 条" % (total - mine, mine))
+
+    def _refresh_mine_box(self):
+        drugs = TREATMENT_DB.get(self.current_cls, {}).get("drugs", [])
+        mine = sum(1 for d in drugs if d.get("origin") == "user")
+        self.mine_title.setText("我的条目（%d）" % mine)
+        if mine:
+            self.mine_body.setText("改名、删除只影响你的库；同名条目会覆盖内置版本。")
+        else:
+            self.mine_body.setText("还没有补充条目。新建药剂，或导入农技站提供的当地用药清单。")
+
+    def _refresh_audit(self):
+        a = treatments_audit()
+        pct = a["有登记证号"] * 100 // max(1, a["药剂条目"])
+        gaps = len(a["缺登记证号"])
+        self.lbl_audit.setText("登记证完整度 %d%% · %s"
+                               % (pct, "库体检通过" if not gaps else "待补 %d 条" % gaps))
+        self.lbl_audit.setToolTip("库体检会逐条列出缺登记证号 / 安全间隔期 / 防治适期的条目")
+
+    def _fill_thresholds(self):
+        meta = TREATMENT_DB.get(self.current_cls, {}).get("meta") or {}
+        for k, ed in self.th_inputs.items():
+            ed.setText(str(meta.get(k, "")))
 
     def _on_cls(self, cls):
         self.current_cls = cls
+        self.current_drug = None
+        self._clear_inputs()
+        self._set_chip(self.info_chip, "选择药剂", "grey")
+        self.info_note.setText("从左侧选择一条药剂查看详情；或点「新建药剂」补充当地用药。")
+        self.btn_del.setEnabled(False)
+        self.btn_del.setToolTip("尚未选中我的条目")
+        self.link_save_as.setVisible(False)
+        self.search.blockSignals(True)
+        self.search.clear()
+        self.search.blockSignals(False)
+        self._fill_thresholds()
         self._fill_list()
+        self._refresh_mine_box()
 
     def _fill_list(self):
+        keep = self._pending_name or (self.current_drug or {}).get("name")
+        self._pending_name = None
+        kw = self.search.text().strip().lower()
+        drugs = TREATMENT_DB.get(self.current_cls, {}).get("drugs", [])
+        self._shown_drugs = []
+        self._row_widgets = []
+        self.lst.blockSignals(True)
         self.lst.clear()
-        for d in TREATMENT_DB.get(self.current_cls, {}).get("drugs", []):
-            mine = d.get("origin") == "user"
-            label = "%s%s　%s" % ("✎ " if mine else "　", d.get("name", ""),
-                                  (d.get("dose") or ""))
-            item = QListWidgetItem(label)
-            item.setToolTip("我补充的" if mine else "内置（只读）")
-            if mine:
-                item.setForeground(QColor(NAU["primary"]))
+        for d in drugs:
+            hay = " ".join(str(d.get(k) or "") for k in ("name", "reg_no", "dose")).lower()
+            if kw and kw not in hay:
+                continue
+            self._shown_drugs.append(d)
+            item = QListWidgetItem()
+            item.setSizeHint(QSize(0, 52))
             self.lst.addItem(item)
-        meta = TREATMENT_DB.get(self.current_cls, {}).get("meta", {})
-        for k, ed in self.th_inputs.items():
-            ed.setText(str(meta.get(k, "")))
-        if self.lst.count():
-            self.lst.setCurrentRow(0)
+            w = self._make_row(d)
+            self.lst.setItemWidget(item, w)
+            self._row_widgets.append(w)
+        self.lst.blockSignals(False)
+        self.empty_hint.setVisible(not self._shown_drugs)
+        if self._shown_drugs:
+            idx = 0
+            if keep:
+                for i, d in enumerate(self._shown_drugs):
+                    if d.get("name") == keep:
+                        idx = i
+                        break
+            self.lst.setCurrentRow(idx)
+        else:
+            self.lst.setCurrentRow(-1)
+            self._style_rows()
 
     def _on_drug(self, row):
-        drugs = TREATMENT_DB.get(self.current_cls, {}).get("drugs", [])
-        if row < 0 or row >= len(drugs):
+        if row < 0 or row >= len(self._shown_drugs):
             return
-        d = drugs[row]
+        d = self._shown_drugs[row]
         self.current_drug = d
         for key, ed in self.inputs.items():
             ed.setText("" if d.get(key) is None else str(d.get(key)))
-        deletable = d.get("origin") == "user"
-        self.btn_del.setEnabled(deletable)
-        self.btn_del.setToolTip("" if deletable else "内置条目不可删除（可另存一条同名条目覆盖）")
+        mine = d.get("origin") == "user"
+        self.btn_del.setEnabled(mine)
+        self.btn_del.setToolTip("" if mine else "内置条目不可删除；可另存一条同名条目覆盖")
+        if mine:
+            self._set_chip(self.info_chip, "我的条目", "green")
+            self.info_note.setText("这是我的条目，修改后点「保存到我的库」立即生效；"
+                                   "删除只影响你的库。")
+        else:
+            self._set_chip(self.info_chip, "内置条目 · 只读", "grey")
+            self.info_note.setText("内置条目只读；「保存到我的库」会以你的版本另存为"
+                                   "我的条目（同名覆盖）。")
+        self.link_save_as.setVisible(not mine)
+        self._style_rows()
 
     # ── 操作 ──
-    def new_drug(self):
-        self.current_drug = None
+    def _clear_inputs(self):
         for ed in self.inputs.values():
             ed.clear()
+
+    def new_drug(self):
+        self.current_drug = None
+        self._clear_inputs()
         self.lst.setCurrentRow(-1)
+        self._set_chip(self.info_chip, "新建条目", "amber")
+        self.info_note.setText("正在新建药剂条目；名称必填，保存后进入「我的条目」。")
+        self.btn_del.setEnabled(False)
+        self.btn_del.setToolTip("新建条目尚未保存，不能删除")
+        self.link_save_as.setVisible(False)
         self.inputs["name"].setFocus()
+        self._style_rows()
         InfoBar.info("新建", "填好名称后点「保存到我的库」", duration=3000,
                      position=InfoBarPosition.TOP, parent=self)
+
+    def _reset_form(self):
+        if self.current_drug is None:
+            self._clear_inputs()
+            return
+        for key, ed in self.inputs.items():
+            val = self.current_drug.get(key)
+            ed.setText("" if val is None else str(val))
 
     def save_drug(self):
         drug = {k: ed.text().strip() for k, ed in self.inputs.items()}
@@ -15095,6 +15484,7 @@ class TreatmentInterface(QWidget):
             InfoBar.warning("保存失败", msg, duration=4000,
                             position=InfoBarPosition.TOP, parent=self)
             return
+        self._pending_name = rec.get("name")
         InfoBar.success(msg, "%s · %s" % (self.current_cls, rec.get("name")),
                         duration=3000, position=InfoBarPosition.TOP, parent=self)
         self.reload()
@@ -15107,6 +15497,7 @@ class TreatmentInterface(QWidget):
                                                      duration=4000,
                                                      position=InfoBarPosition.TOP,
                                                      parent=self)
+        self.current_drug = None
         self.reload()
 
     def save_threshold(self):
@@ -15148,6 +15539,33 @@ class TreatmentInterface(QWidget):
                                                    duration=5000,
                                                    position=InfoBarPosition.TOP, parent=self)
         self.reload()
+
+    # ── 大屏 / 窄窗适配 ──
+    def _apply_content_width(self):
+        if not hasattr(self, "root"):
+            return
+        vw = self.scroll.viewport().width() if hasattr(self, "scroll") else self.width()
+        side = max(28, (vw - CONTENT_MAX_WIDTH) // 2)
+        self.root.setContentsMargins(side, 14, side, 6)
+
+    def _reflow_left(self):
+        card = getattr(self, "left_card", None)
+        if card is None:
+            return
+        w = 338 if self.width() >= 1050 else 300
+        if self._left_w != w:
+            self._left_w = w
+            card.setFixedWidth(w)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply_content_width()
+        self._reflow_left()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._apply_content_width()
+        self._reflow_left()
 
 
 class TrainInterface(QWidget):
