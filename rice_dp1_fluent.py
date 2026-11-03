@@ -1907,7 +1907,7 @@ def vision_recheck(image, box=None, question=None, box_index=0, source="tool"):
         resp = HTTP_SESSION.post(api_endpoint(),
                                  headers={"Authorization": "Bearer " + get_api_key(),
                                           "Content-Type": "application/json"},
-                                 json=payload, timeout=(10, 90))
+                                 json=payload, timeout=(8, 30))
         if resp.status_code != 200:
             return {"ok": False, "error": "视觉复核失败：HTTP %s" % resp.status_code}
         data = resp.json()
@@ -1919,6 +1919,7 @@ def vision_recheck(image, box=None, question=None, box_index=0, source="tool"):
         return {"ok": True, "verdict": parse_class_from_text(text), "raw": text[:300],
                 "model": get_model_name(), "box_index": box_index}
     except Exception as e:
+        log.warning("视觉复核失败（%s）：%s", source, e)
         return {"ok": False, "error": "视觉复核异常：%s" % e}
 
 
@@ -4630,6 +4631,7 @@ class LLMAnalysisThread(QThread):
     chunk = pyqtSignal(str)
     reasoning = pyqtSignal(str)      # 思维链（思考模式下先于正文到达）
     tool_used = pyqtSignal(str, str)  # (工具名, 中文标签) —— 界面显示「正在查本地防治库…」
+    tool_done = pyqtSignal(str, str)  # 工具执行完成，界面把「正在…」改成「✓ 已…」
     fallback = pyqtSignal(str)        # 主服务商失败、自动切换备用时的通知
     result_ready = pyqtSignal(str)
     failed = pyqtSignal(str)
@@ -4786,6 +4788,8 @@ class LLMAnalysisThread(QThread):
             try:
                 # ── Agent 循环：模型可以先调工具，再基于工具结果作答 ──
                 for round_i in range(AGENT_MAX_TOOL_ROUNDS + 1):
+                    if self._stop:
+                        return
                     body = self._payload_for(provider, messages, thinking_on)
                     if self.use_tools and round_i < AGENT_MAX_TOOL_ROUNDS:
                         body["tools"] = AGENT_TOOLS
@@ -4800,7 +4804,7 @@ class LLMAnalysisThread(QThread):
                         break
                     if calls and not self._stop:
                         messages.append(self._assistant_tool_message(content or "", calls))
-                        for c in calls:
+                        for ci, c in enumerate(calls):
                             label = TOOL_LABELS.get(c["name"], c["name"])
                             self.tool_used.emit(c["name"], label)   # 界面显示「正在查…」
                             try:
@@ -4809,10 +4813,12 @@ class LLMAnalysisThread(QThread):
                                 targs = {}
                             result = run_agent_tool(c["name"], targs, self.image, self.boxes)
                             tools_used.append(c["name"])
+                            self.tool_done.emit(c["name"], label)
                             log_llm_call(event="tool", provider=provider, model=get_model_name(provider),
                                          tool=c["name"], args=targs)
+                            call_id = c.get("id") or ("call_%d" % ci)
                             messages.append({"role": "tool",
-                                             "tool_call_id": c.get("id") or ("call_%d" % len(tools_used)),
+                                             "tool_call_id": call_id,
                                              "content": result})
                         continue
                     if ckey and not tools_used:      # 用了工具的回答不缓存（含实时数据）
@@ -4855,7 +4861,7 @@ class LLMAnalysisThread(QThread):
         """发一次请求。返回 (正文, 工具调用列表)；出错返回 (None, None)"""
         body = dict(payload, stream=True) if stream else payload
         resp = HTTP_SESSION.post(endpoint, headers=headers, json=body,
-                                 timeout=(10, 300 if stream else 120), stream=stream)
+                                 timeout=(10, 90 if stream else 120), stream=stream)
         self._resp = resp
         if resp.status_code != 200:
             try:
@@ -8763,8 +8769,10 @@ class ResultInterface(QWidget):
         self.llm_thread.chunk.connect(lambda t: self._on_stream(t, "ai_initial"))
         self.llm_thread.reasoning.connect(lambda t: self._on_reasoning(t, "ai_initial"))
         self.llm_thread.tool_used.connect(self._on_tool)
+        self.llm_thread.tool_done.connect(self._on_tool_done)
         self.llm_thread.result_ready.connect(self._on_ai_result)
         self.llm_thread.failed.connect(self._on_ai_error)
+        self.llm_thread.finished.connect(self._on_ai_thread_finished)
         self.llm_thread.start()
 
     def _set_busy(self, busy):
@@ -8990,9 +8998,11 @@ class ResultInterface(QWidget):
             severity=self.severity, boxes=self.result_list))
         self.llm_thread3.fallback.connect(self._on_fallback)
         self.llm_thread3.tool_used.connect(self._on_tool)
+        self.llm_thread3.tool_done.connect(self._on_tool_done)
         self.llm_thread3.chunk.connect(lambda t: self._on_stream(t, "ai"))
         self.llm_thread3.result_ready.connect(self._on_revision)
         self.llm_thread3.failed.connect(self._on_revision_error)
+        self.llm_thread3.finished.connect(self._on_ai_thread_finished)
         self.llm_thread3.start()
 
     def _on_revision(self, text):
@@ -9167,6 +9177,34 @@ class ResultInterface(QWidget):
         if not self._stream_timer.isActive():
             self._stream_timer.start()
 
+    def _on_tool_done(self, name, label):
+        """工具返回后把「正在…」改成「✓ 已…」，并提示正在等模型回答"""
+        old = "正在%s…" % label
+        new = "✓ 已%s" % label
+        for i in range(len(self._chat_history) - 1, -1, -1):
+            entry = self._chat_history[i]
+            if entry[0] == "tool" and entry[1] == old:
+                self._chat_history[i] = (entry[0], new) + tuple(entry[2:])
+                break
+        for i in range(len(self._chat_history) - 1, -1, -1):
+            role, text = self._chat_history[i][0], self._chat_history[i][1]
+            if role == "system" and (text.startswith("正在调用") or text == "AI 思考中…"):
+                self._chat_history[i] = ("system", "工具已完成，等待模型回答…")
+                break
+        if not self._stream_timer.isActive():
+            self._stream_timer.start()
+
+    def _on_ai_thread_finished(self):
+        """线程正常/异常/停止结束时兜底复位，避免界面永远停在「正在回复」"""
+        if not self._ai_busy:
+            return
+        self._set_busy(False)
+        self._stop_stream_timer()
+        self._stream_index = None
+        if self._stream_stopped:
+            self._chat_history.append(("system", "（已停止生成）"))
+        self._rebuild_chat(focus="bottom")
+
     def _on_fallback(self, msg):
         """主服务商失败、自动切到备用：告诉用户，别让它在暗处发生"""
         log_event("provider_fallback", detail=msg)
@@ -9223,8 +9261,10 @@ class ResultInterface(QWidget):
         self.llm_thread2.chunk.connect(lambda t: self._on_stream(t, "ai"))
         self.llm_thread2.reasoning.connect(lambda t: self._on_reasoning(t, "ai"))
         self.llm_thread2.tool_used.connect(self._on_tool)
+        self.llm_thread2.tool_done.connect(self._on_tool_done)
         self.llm_thread2.result_ready.connect(self._on_followup)
         self.llm_thread2.failed.connect(self._on_followup_error)
+        self.llm_thread2.finished.connect(self._on_ai_thread_finished)
         self.llm_thread2.start()
 
     def _on_ai_result(self, text):
