@@ -352,7 +352,29 @@ CREATE TABLE IF NOT EXISTS records (
     thumb_path  TEXT,
     sha1        TEXT,
     device      TEXT,
-    source      TEXT                      -- 谁识别的：pc（电脑本地）/ phone（手机直传）/ miniapp
+    source      TEXT,                     -- 谁识别的：pc / phone / miniapp / manual（地图手动标记）
+    sprayed_at  TEXT,                     -- 已施药时间；空 = 未施药（手动标记点打完药回填）
+    batch_id    INTEGER,                  -- 手动标记所属批次（mark_batches.id）
+    archived_at TEXT                      -- 软删除时间；空=有效（批次回退时批量写入）
+);
+CREATE TABLE IF NOT EXISTS mark_batches (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    batch_no    TEXT,                     -- 批次号，如 B20261031-001
+    started_at  TEXT,                     -- 开始标记时间
+    finished_at TEXT,                     -- 保存时间
+    operator    TEXT,                     -- 操作人（电脑用户名）
+    note        TEXT,                     -- 备注
+    n_points    INTEGER DEFAULT 0,        -- 点数
+    archived_at TEXT                      -- 软删除；空=有效
+);
+CREATE TABLE IF NOT EXISTS mark_changes (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    rec_id   INTEGER,
+    field    TEXT,                        -- 改了什么字段（目前只有 cls）
+    old_val  TEXT,
+    new_val  TEXT,
+    at       TEXT,
+    operator TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_shot_at ON records(shot_at);
 CREATE INDEX IF NOT EXISTS idx_sha1    ON records(sha1);
@@ -403,10 +425,14 @@ class GeoStore:
         with self._conn() as c:
             c.executescript(_SCHEMA)
             # 老库补列：source 是后加的，已经存在时会抛 OperationalError，忽略即可
-            try:
-                c.execute("ALTER TABLE records ADD COLUMN source TEXT")
-            except sqlite3.OperationalError:
-                pass
+            for _sql in ("ALTER TABLE records ADD COLUMN source TEXT",
+                         "ALTER TABLE records ADD COLUMN sprayed_at TEXT",
+                         "ALTER TABLE records ADD COLUMN batch_id INTEGER",
+                         "ALTER TABLE records ADD COLUMN archived_at TEXT"):
+                try:
+                    c.execute(_sql)
+                except sqlite3.OperationalError:
+                    pass          # 列已存在，正常忽略
 
     def count(self):
         with self._conn() as c:
@@ -418,10 +444,14 @@ class GeoStore:
         with self._conn() as c:
             return c.execute("SELECT 1 FROM records WHERE sha1=? LIMIT 1", (sha1,)).fetchone() is not None
 
-    def all_records(self, order="shot_at ASC"):
+    def all_records(self, order="shot_at ASC", include_archived=False):
+        """全部记录。默认**排除软删除**（批次回退过的点），避免它们出现在地图/风险/统计里。"""
         with self._conn() as c:
             rows = c.execute(f"SELECT * FROM records ORDER BY {order}").fetchall()
-        return [dict(r) for r in rows]
+        out = [dict(r) for r in rows]
+        if not include_archived:
+            out = [r for r in out if not (r.get("archived_at") or "").strip()]
+        return out
 
     def get(self, rec_id):
         with self._conn() as c:
@@ -503,7 +533,7 @@ class GeoStore:
     def update(self, rec_id, **fields):
         allowed = {"shot_at", "lon", "lat", "glon", "glat", "coord_src", "address",
                    "cls", "conf", "boxes", "note", "plot", "orig_path", "ann_path",
-                   "thumb_path", "device"}
+                   "thumb_path", "device", "sprayed_at", "batch_id", "archived_at"}
         sets, vals = [], []
         for k, v in fields.items():
             if k in allowed:
@@ -519,6 +549,119 @@ class GeoStore:
         glon, glat = to_gcj02(lon_wgs, lat_wgs, "wgs84")
         self.update(rec_id, lon=lon_wgs, lat=lat_wgs, glon=glon, glat=glat,
                     coord_src=coord_src)
+
+    def add_manual_mark(self, lon_wgs, lat_wgs, cls, note="手动标记（地图点选）",
+                        shot_at=None, plot="", batch_id=None, operator=""):
+        """在地图上手动标记一个病患点（没有照片）。
+
+        与识别记录同表同结构，靠 source="manual" 区分：
+          · 地图上画成「小旗」而不是圆点；
+          · 参与风险统计（因为它就是真实存在的病点）；
+          · 可在记录管理里删除，或回填 sprayed_at 标成"已施药"。
+        坐标按 WGS-84 存（与其它记录一致），显示时统一转 GCJ-02。
+        """
+        rid = self.add_record(shot_at=shot_at or datetime.now(),
+                              lon=lon_wgs, lat=lat_wgs, coord_src="map-mark",
+                              cls=cls or "", conf=0.0, note=note,
+                              plot=plot, source="manual")
+        if batch_id is not None:
+            self.update(rid, batch_id=batch_id)
+        return rid
+
+    def set_sprayed(self, rec_id, when=None):
+        """"已施药"回填：when 给时间字符串表示已打药，给 None/"" 表示撤销。
+
+        只写 sprayed_at，不动其它字段 —— 识别结果与坐标保持原样。
+        """
+        when = (when or "").strip()
+        if not when:
+            self.update(rec_id, sprayed_at="")
+            return ""
+        self.update(rec_id, sprayed_at=when)
+        return when
+
+    # ── 手动标记批次：每次「保存标记」= 一个批次，可整批回退/恢复 ──
+    def _now_text(self):
+        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    def create_batch(self, operator="", note="", started_at=None):
+        """开一个新批次，返回 (batch_id, batch_no)"""
+        now = self._now_text()
+        with self._conn() as c:
+            cur = c.execute(
+                "INSERT INTO mark_batches(batch_no,started_at,finished_at,operator,note,"
+                "n_points,archived_at) VALUES(?,?,?,?,?,?,?)",
+                ("", started_at or now, now, operator or "", note or "", 0, ""))
+            bid = cur.lastrowid
+            no = "B%s-%03d" % (datetime.now().strftime("%Y%m%d"), bid)
+            c.execute("UPDATE mark_batches SET batch_no=? WHERE id=?", (no, bid))
+        return bid, no
+
+    def finish_batch(self, batch_id, n_points):
+        with self._conn() as c:
+            c.execute("UPDATE mark_batches SET finished_at=?, n_points=? WHERE id=?",
+                      (self._now_text(), int(n_points or 0), batch_id))
+
+    def list_batches(self, start_date=None, end_date=None, include_archived=False):
+        """按时间段（YYYY-MM-DD，含首尾）查批次，附类别分布与明细"""
+        with self._conn() as c:
+            rows = [dict(r) for r in
+                    c.execute("SELECT * FROM mark_batches ORDER BY id DESC").fetchall()]
+        out = []
+        for b in rows:
+            if not include_archived and (b.get("archived_at") or "").strip():
+                continue
+            day = (b.get("finished_at") or b.get("started_at") or "")[:10]
+            if start_date and day and day < start_date:
+                continue
+            if end_date and day and day > end_date:
+                continue
+            recs = self.batch_records(b["id"])
+            dist = {}
+            for r in recs:
+                k = r.get("cls") or "未指定"
+                dist[k] = dist.get(k, 0) + 1
+            b["records"] = recs
+            b["cls_dist"] = dist
+            b["n_points"] = len(recs) if recs else (b.get("n_points") or 0)
+            out.append(b)
+        return out
+
+    def batch_records(self, batch_id):
+        with self._conn() as c:
+            rows = c.execute("SELECT * FROM records WHERE batch_id=? ORDER BY id",
+                             (batch_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def archive_batch(self, batch_id, on=True):
+        """整批回退（软删除）/ 恢复：records 与批次一起置 archived_at"""
+        when = self._now_text() if on else ""
+        with self._conn() as c:
+            c.execute("UPDATE mark_batches SET archived_at=? WHERE id=?", (when, batch_id))
+            c.execute("UPDATE records SET archived_at=? WHERE batch_id=?", (when, batch_id))
+        return bool(on)
+
+    def change_class(self, rec_id, new_cls, operator=""):
+        """更换病状类别，并记一条变更留痕（mark_changes 表）"""
+        rec = self.get(rec_id) or {}
+        old = rec.get("cls") or ""
+        new_cls = new_cls or ""
+        if old == new_cls:
+            return old
+        self.update(rec_id, cls=new_cls)
+        with self._conn() as c:
+            c.execute("INSERT INTO mark_changes(rec_id,field,old_val,new_val,at,operator) "
+                      "VALUES(?,?,?,?,?,?)",
+                      (rec_id, "cls", old, new_cls, self._now_text(), operator or ""))
+        return old
+
+    def change_log(self, rec_id=None, limit=200):
+        sql = ("SELECT * FROM mark_changes WHERE rec_id=? ORDER BY id DESC LIMIT ?"
+               if rec_id is not None
+               else "SELECT * FROM mark_changes ORDER BY id DESC LIMIT ?")
+        args = (rec_id, limit) if rec_id is not None else (limit,)
+        with self._conn() as c:
+            return [dict(r) for r in c.execute(sql, args).fetchall()]
 
     def delete(self, rec_id):
         rec = self.get(rec_id)
@@ -550,8 +693,12 @@ class GeoStore:
                 "address": r.get("address") or "",
                 "thumb": r.get("thumb_path") or "",
                 "note": r.get("note") or "",
-                # 来源（phone/mini/pc）：地图上用它给点描边，一眼看出哪些是手机传的
+                # 来源（phone/mini/pc/manual）：地图上用它给点描边，一眼看出哪些是手机传的
                 "source": r.get("source") or "",
+                # 已施药：手动标记的点打完药回填时间，地图上变灰绿并加 ✔
+                "sprayed": bool((r.get("sprayed_at") or "").strip()),
+                "batch_id": r.get("batch_id"),
+                "sprayed_at": r.get("sprayed_at") or "",
             })
         return pts
 

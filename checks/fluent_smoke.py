@@ -1809,6 +1809,168 @@ try:
     check("工具 daily_digest 能出简报数据",
           dg.get("统计天数") == 7 and "检测次数" in dg, list(dg)[:5])
 
+    # ── v0.1.1 新增：手动标记病患点 + 最优施药路线 ──────────────
+    _pts = [{"id": i, "lon": 118.86 + i * 0.0005, "lat": 32.05,
+             "cls": "稻瘟病", "time": "2026-10-31 10:00"} for i in range(4)]
+    _r = m.tsp_spray_route(_pts, origin=(118.8595, 32.05))
+    check("施药路线：访问点数正确", _r["点数"] == 4, _r["点数"])
+    check("施药路线：从离出发点最近的那个开始", _r["顺序"][0]["id"] == 0,
+          _r["顺序"][0]["id"])
+    check("施药路线：给出总里程与耗时",
+          _r["总里程_m"] > 0 and _r["步行分钟"] >= 0 and _r["作业分钟"] >= 0,
+          (_r["总里程_m"], _r["步行分钟"], _r["作业分钟"]))
+    _r2 = m.tsp_spray_route(_pts, origin=(118.8595, 32.05), round_trip=True)
+    check("施药路线：往返比单程长", _r2["总里程_m"] > _r["总里程_m"],
+          (_r2["总里程_m"], _r["总里程_m"]))
+    check("施药路线：空输入不崩", m.tsp_spray_route([])["点数"] == 0)
+    check("施药路线：不给起点时自动从最近点开始",
+          m.tsp_spray_route(_pts)["顺序"][0]["id"] is not None)
+
+    _st3 = m.geo_store()
+    _mid = _st3.add_manual_mark(118.8601, 32.0502, "白叶枯病", note="自检标记")
+    _mrec = _st3.get(_mid)
+    check("手动标记点入库：source=manual", (_mrec or {}).get("source") == "manual",
+          (_mrec or {}).get("source"))
+    check("手动标记点入库：coord_src=map-mark",
+          (_mrec or {}).get("coord_src") == "map-mark", (_mrec or {}).get("coord_src"))
+    check("手动标记点带 GCJ 坐标（地图画得出）",
+          (_mrec or {}).get("glon") is not None, (_mrec or {}).get("glon"))
+    _st3.set_sprayed(_mid, "2026-10-31 12:00:00")
+    check("已施药能回填", bool(_st3.get(_mid).get("sprayed_at")),
+          _st3.get(_mid).get("sprayed_at"))
+    _st3.set_sprayed(_mid, None)
+    check("已施药能撤销", not (_st3.get(_mid).get("sprayed_at") or ""),
+          repr(_st3.get(_mid).get("sprayed_at")))
+    _mp = [p for p in _st3.to_points() if p["id"] == _mid]
+    check("地图点位带 sprayed 字段", bool(_mp) and "sprayed" in _mp[0],
+          list(_mp[0].keys())[-3:] if _mp else None)
+    _st3.delete(_mid)
+    check("测试标记已清理", _st3.get(_mid) is None)
+
+    _html = m.map_html_text()
+    check("地图页注入六类类别名（选类别要用）",
+          "var CLASS_NAMES = [" in _html and "稻瘟病" in _html)
+    _missing_js = [fn for fn in ("openMarkPopup", "chooseMark", "removeMark", "undoMark",
+                                 "clearMarks", "setMarkMode", "drawMarks", "setOrigin",
+                                 "showMarkRoute", "markSprayed", "clearMarkRoute")
+                   if ("function " + fn + "(") not in _html]
+    check("地图 JS 标记/路线函数齐全", not _missing_js, _missing_js)
+    check("地图点击按模式分派（标记 / 出发点 / 常规落点）",
+          "if (markMode) { openMarkPopup" in _html
+          and "if (originMode) { setOrigin" in _html
+          and "bridge.pick(e.latlng.lng" in _html)
+    check("手动标记点在地图上用旗标（source=manual 分支）",
+          "if (p.source === 'manual')" in _html)
+    check("地图有标记模式提示条与路线摘要面板",
+          'id="markHint"' in _html and 'id="routePanel"' in _html)
+    check("重渲染后未保存的标记点会补画（drawMarks 在 renderMap 里）",
+          "drawMarks();          // 重渲染后把未保存的标记点补回来" in _html)
+    check("地块地图页有手动标记/路线链路",
+          all(hasattr(win.mapInterface, n) for n in
+              ("_on_map_marked", "_on_map_unmark", "save_manual_marks",
+               "start_route_plan", "_on_map_origin", "_on_mark_sprayed",
+               "_route_candidates")))
+    check("交互地图窗口有标记/路线方法",
+          all(hasattr(m.MapWebWindow, n) for n in
+              ("js", "set_origin_mode", "show_mark_route", "refresh_mark_label",
+               "_on_mark_toggled", "clear_marks_or_route")))
+    check("桥接类有标记/路线信号",
+          all(hasattr(m.MapBridge, n) for n in
+              ("marked", "unmarkRequested", "originPicked", "sprayedRequested")))
+    check("选点对话框类存在", hasattr(m, "MarkRouteDialog"))
+    check("地块地图页初始无未保存标记", win.mapInterface._pending_marks == [])
+
+    # 回归：点「最优施药路线」曾经静默无反馈（用户以为按钮坏了）
+    check("地图页有「请点出发点」的醒目提示条", 'id="originHint"' in _html)
+    check("地图 JS 有 cancelOrigin（提示条里的取消入口）",
+          "function cancelOrigin(" in _html)
+    check("选出发点模式能切换提示条显隐",
+          "document.getElementById('originHint')" in _html)
+    check("桥接类有「取消选出发点」信号", hasattr(m.MapBridge, "originCancelled"))
+    check("地块地图页有取消处理器", hasattr(win.mapInterface, "_on_origin_cancelled"))
+    win.mapInterface._route_origin_mode = True
+    win.mapInterface.start_route_plan()          # 再点一次 = 取消
+    check("再点一次「最优施药路线」= 取消选点",
+          win.mapInterface._route_origin_mode is False)
+    win.mapInterface.start_route_plan()          # 没开地图 → 自动打开分支，不应崩
+    check("没开地图时点最优路线不崩（自动打开并记下待续）",
+          win.mapInterface._want_route_after_load is True
+          or not m.webengine_available())
+    win.mapInterface._want_route_after_load = False
+
+    # ── 批次历史 / 右键菜单（v3.9.1）──
+    _st4 = m.geo_store()
+    _b0 = len(_st4.list_batches())
+    win.mapInterface._pending_marks = [
+        {"lon": 118.8601, "lat": 32.0502, "glon": 118.8651, "glat": 32.0480, "cls": "稻瘟病"},
+        {"lon": 118.8611, "lat": 32.0503, "glon": 118.8661, "glat": 32.0481, "cls": "白叶枯病"},
+    ]
+    win.mapInterface.save_manual_marks()
+    _bs = _st4.list_batches()
+    check("保存标记会生成一个批次", len(_bs) == _b0 + 1, len(_bs))
+    check("批次里有 2 个点且带类别分布",
+          bool(_bs) and _bs[0]["n_points"] == 2 and len(_bs[0]["cls_dist"]) == 2,
+          _bs[0]["cls_dist"] if _bs else None)
+    check("未保存标记已清空", win.mapInterface._pending_marks == [])
+    _bid = _bs[0]["id"]
+    check("批次号格式正确（B+日期-序号）",
+          str(_bs[0].get("batch_no") or "").startswith("B"), _bs[0].get("batch_no"))
+    _today = datetime.now().strftime("%Y-%m-%d")
+    check("按时间段能查到该批次", any(b["id"] == _bid for b in _st4.list_batches(_today, _today)))
+    check("不匹配的时间段查不到", len(_st4.list_batches("2099-01-01", "2099-12-31")) == 0)
+    _rid = _st4.batch_records(_bid)[0]["id"]
+    win.mapInterface._on_saved_class_change(_rid, "胡麻斑病")
+    check("已保存点换病状生效", _st4.get(_rid)["cls"] == "胡麻斑病")
+    check("换病状有变更留痕", len(_st4.change_log(_rid)) >= 1)
+    win.mapInterface._on_saved_delete(_rid)
+    check("已保存点能删除", _st4.get(_rid) is None)
+    _st4.archive_batch(_bid)
+    check("整批回退后记录被标记归档",
+          bool(_st4.batch_records(_bid))
+          and all((r.get("archived_at") or "").strip() for r in _st4.batch_records(_bid)))
+    check("回退的批次默认不出现在历史里",
+          all(b["id"] != _bid for b in _st4.list_batches()))
+    check("勾选「显示已回退」能查到", any(b["id"] == _bid
+          for b in _st4.list_batches(include_archived=True)))
+    _st4.archive_batch(_bid, False)
+    check("批次能恢复", any(b["id"] == _bid for b in _st4.list_batches()))
+    for _r in _st4.batch_records(_bid):
+        _st4.delete(_r["id"])
+    check("测试批次数据已清理", not _st4.batch_records(_bid))
+
+    check("地图 JS 有右键换病状/删除函数",
+          all(("function " + _fn + "(") in _html for _fn in
+              ("classButtonsHtml", "reclassMark", "changeSavedClass", "deleteSavedMark")))
+    check("标记点绑定了右键菜单（contextmenu）", ".on('contextmenu'" in _html)
+    check("桥接类有换病状/删除信号",
+          all(hasattr(m.MapBridge, _n) for _n in
+              ("pendingReclassed", "deleteMarkRequested", "changeClassRequested")))
+    check("地块地图页有换病状/删除处理器",
+          all(hasattr(win.mapInterface, _n) for _n in
+              ("_on_pending_reclass", "_on_saved_delete", "_on_saved_class_change", "_operator")))
+    check("批次历史对话框存在", hasattr(m, "MarkHistoryDialog"))
+    _mwin2 = m.MapWebWindow(win.mapInterface)
+    check("交互地图窗口有「标记历史」按钮", hasattr(_mwin2, "btn_history"))
+    check("交互地图窗口有打开历史的方法", hasattr(_mwin2, "open_history"))
+    _mwin2.close()
+
+    # 交互地图窗口：不建 WebEngine（延后创建），只验证按钮与安全跳过
+    try:
+        _mwin = m.MapWebWindow(win.mapInterface)
+        check("交互地图窗口有「手动标记」按钮且可切换",
+              getattr(_mwin, "btn_mark", None) is not None and _mwin.btn_mark.isCheckable())
+        _mwin.btn_mark.setChecked(True)       # 触发 toggled → js() 在无视图时应安全跳过
+        check("无地图视图时点标记不崩（js() 安全跳过）", _mwin.btn_mark.isChecked())
+        _mwin.btn_mark.setChecked(False)
+        check("撤销/保存/路线/清除按钮与计数标签都在",
+              all(getattr(_mwin, n, None) is not None for n in
+                  ("btn_undo", "btn_save_mark", "btn_route", "btn_clear", "lbl_marks")))
+        _mwin.refresh_mark_label()
+        check("标记计数标签能刷新（空列表时不显示）", _mwin.lbl_marks.text() == "")
+        _mwin.close()
+    except Exception as _e:
+        check("交互地图窗口可离屏创建", False, str(_e)[:90])
+
     shot = OUT / "result_page.png"
     win.grab().save(str(shot))
     check("离屏截图成功", shot.exists() and shot.stat().st_size > 5_000)
