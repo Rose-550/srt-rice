@@ -2,13 +2,16 @@
 
 > 桌面端 PyQt5 + YOLOv8n 识别 + 地块地图 + 防治建议 + 教学科普 + 手机端联动的代码仓库。
 > **本仓库只包含程序代码及其运行依赖**；数据集、模型权重、日志、配置密钥、比赛材料和文档报告保留在本地工作区，不入库。
+>
+> 当前代码版本 **3.11.0**（2026-11-05）；变更记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 下载
 
-- 代码：`git clone https://github.com/Rose-550/srt-rice.git`
+- 代码：`git clone https://github.com/Rose-550/srt-rice.git`（当前 `main` 为 3.11.0，变更见 [CHANGELOG.md](CHANGELOG.md)）
 - 模型权重与手机端模型：[v0.1.0 Release](https://github.com/Rose-550/srt-rice/releases/tag/v0.1.0)
   - `best.pt`（必下，桌面端启动必需）
   - `model.onnx`、`ort-wasm-simd-threaded.wasm`（可选，手机端网页版）
+- 3.11.0 为代码与界面更新，模型权重未变，仍使用 v0.1.0 Release 中的文件。
 
 ## 克隆后先做什么
 
